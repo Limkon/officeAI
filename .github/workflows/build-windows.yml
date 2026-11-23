@@ -54,6 +54,21 @@ jobs:
       - name: Build Windows installer (NSIS)
         run: npm run dist:win --workspace=@officeai/desktop-app
 
+      # 安装包里必须真的带上唤醒器，否则控制中心的「一键安装」会失败。
+      - name: Verify installer contents
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem ./release/OfficeAI-Setup-*.exe -ErrorAction SilentlyContinue
+          if (-not $installer) { throw '未找到 release/OfficeAI-Setup-*.exe' }
+          Get-Item $installer.FullName | Select-Object Name, Length
+          foreach ($f in @(
+            './release/win-unpacked/resources/assets/waker/OfficeAI.Waker.dll',
+            './release/win-unpacked/resources/assets/waker/install-waker.ps1'
+          )) {
+            if (-not (Test-Path $f)) { throw "安装包资源缺失：$f" }
+            Get-Item $f | Select-Object Name, Length
+          }
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
