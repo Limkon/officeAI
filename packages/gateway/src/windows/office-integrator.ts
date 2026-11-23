@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { buildGatewayLaunchUrl, type WindowsOfficeStatus } from '@officeai/shared';
+import { ensureLocalhostCert } from '../certs.js';
 import { detectOfficeProcesses, type OfficeProcessState } from '../process-watch.js';
 
 const execFileAsync = promisify(execFile);
@@ -283,9 +284,12 @@ export class WindowsOfficeIntegrator {
     }
 
     try {
-      await this.runPowerShell(
-        `Import-Certificate -FilePath '${this.certPath.replace(/'/g, "''")}' -CertStoreLocation Cert:\\CurrentUser\\Root | Out-Null`
-      );
+      // 用 certutil 无交互导入。Import-Certificate 导入受信任根证书会弹确认框，
+      // 在 -NonInteractive 模式下必然失败（且此前被静默吞掉，导致"安装成功"假象）。
+      // certutil -user -addstore Root 直接写入当前用户根证书存储：无需管理员、无弹窗。
+      await execFileAsync('certutil.exe', ['-user', '-addstore', 'Root', this.certPath], {
+        timeout: 15000
+      });
       return {
         ok: true,
         message: '已成功将本地 HTTPS 证书信任到当前用户根证书存储 (Cert:\\CurrentUser\\Root)。'
@@ -382,6 +386,15 @@ export class WindowsOfficeIntegrator {
 
     const certRes = await this.trustLocalCertificate();
     details.push(certRes.message);
+    if (!certRes.ok) {
+      // 证书未信任时 Office 加载项无法加载（WebView2 会拦截），必须如实报错，
+      // 不能再返回"安装成功"。
+      return {
+        ok: false,
+        message: `证书信任失败，Office 加载项无法加载：${certRes.message}`,
+        details
+      };
+    }
 
     try {
       await this.runReg([
@@ -502,9 +515,11 @@ export class WindowsOfficeIntegrator {
       }
     };
 
-    if (fs.existsSync(src)) {
-      copy(src, dest);
+    if (!fs.existsSync(src)) {
+      // 源文件缺失时必须报错，不能静默跳过拷贝却返回成功（此前 jsaddons 会是空的）。
+      throw new Error(`未找到 WPS 加载项源文件: ${src}（安装包可能损坏，请重新安装 OfficeAI）`);
     }
+    copy(src, dest);
     return dest;
   }
 
@@ -530,15 +545,23 @@ export class WindowsOfficeIntegrator {
       };
     }
 
-    fs.mkdirSync(this.wpsAddonsRoot, { recursive: true });
-    const addonDir = this.installLocalWpsAddon();
-    details.push(`已安装本地离线加载项: ${addonDir}`);
+    try {
+      fs.mkdirSync(this.wpsAddonsRoot, { recursive: true });
+      const addonDir = this.installLocalWpsAddon();
+      details.push(`已安装本地离线加载项: ${addonDir}`);
 
-    for (const xmlName of ['publish.xml', 'jsplugins.xml']) {
-      const xmlPath = path.join(this.wpsAddonsRoot, xmlName);
-      const existing = fs.existsSync(xmlPath) ? fs.readFileSync(xmlPath, 'utf8') : null;
-      fs.writeFileSync(xmlPath, this.mergeWpsPluginXml(existing), 'utf8');
-      details.push(`已更新 WPS 配置: ${xmlPath}`);
+      for (const xmlName of ['publish.xml', 'jsplugins.xml']) {
+        const xmlPath = path.join(this.wpsAddonsRoot, xmlName);
+        const existing = fs.existsSync(xmlPath) ? fs.readFileSync(xmlPath, 'utf8') : null;
+        fs.writeFileSync(xmlPath, this.mergeWpsPluginXml(existing), 'utf8');
+        details.push(`已更新 WPS 配置: ${xmlPath}`);
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        message: `WPS 加载项安装失败: ${err instanceof Error ? err.message : String(err)}`,
+        details
+      };
     }
 
     const launchHint = this.launchCommand
@@ -550,6 +573,33 @@ export class WindowsOfficeIntegrator {
       message:
         'WPS Office 加载项安装成功！（本地离线模式，不依赖服务先启动）请重启 WPS（文字 / 表格 / 演示），顶部将出现「OfficeAI 助手」选项卡。',
       details: [...details, launchHint]
+    };
+  }
+
+  /**
+   * 一键全量集成：证书信任 + Microsoft Office + WPS + 唤醒器。
+   * 供安装程序（OfficeAI.exe --integrate）与首次启动兜底调用，全部幂等，
+   * 用户无需手动点任何按钮、手动装证书。
+   */
+  async installAll(): Promise<IntegrationActionResult> {
+    const details: string[] = [];
+    // 确保证书存在（installMsOffice 内部会把它信任到系统根证书存储）
+    ensureLocalhostCert(this.dataDir);
+
+    const office = await this.installMsOffice();
+    details.push(...(office.details ?? []));
+    const wps = await this.installWps();
+    details.push(...(wps.details ?? []));
+    const waker = await this.installOfficeWaker();
+    details.push(...(waker.details ?? []));
+
+    const ok = office.ok && wps.ok && waker.ok;
+    return {
+      ok,
+      message: ok
+        ? 'Office / WPS / 唤醒器全部集成完成！重启 Word / Excel / PowerPoint / WPS 后即可使用「AI 助手」。'
+        : '部分集成失败，请查看详情。',
+      details
     };
   }
 

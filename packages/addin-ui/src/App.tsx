@@ -98,26 +98,9 @@ export const App: React.FC = () => {
     );
   }
 
-  if (host.embedded) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-sm space-y-3 text-center">
-          <div className="text-sm font-bold text-amber-700">OfficeAI 本地服务未运行</div>
-          <p className="text-xs leading-relaxed text-slate-600">
-            助手按需启动，不会开机自启。请先启动 OfficeAI 本地服务，再点击下方按钮重新连接；
-            之后在 Office / WPS 中即可正常使用侧边栏。
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-medium text-white"
-          >
-            我已启动，重新连接
-          </button>
-        </div>
-      </div>
-    );
-  }
-
+  // 嵌入在 Word / Excel / WPS 侧边栏时，直接展示 TaskPaneView。
+  // 之前此处错误地对 embedded 返回了“服务未运行”占位，导致面板空白、助手看不到。
+  // 网关未运行时，上面的 error 分支已会显示“无法连接”；此处只要 config 已就绪就展示助手。
   return (
     <TaskPaneView
       config={config}

@@ -34,6 +34,8 @@ win:
         - x64
 nsis:
   artifactName: OfficeAI-Setup-${version}-win-x64.${ext}
+  # 安装完成后自动集成 Office / WPS（证书、加载项、唤醒器），见 build/installer.nsh
+  include: build/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
