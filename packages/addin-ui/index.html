@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OfficeAI 智能办公助手</title>
+  <!-- Load Office.js only when hosted inside Microsoft Office -->
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var host = params.get('host');
+      if (host === 'office' || window.location.protocol === 'https:') {
+        var s = document.createElement('script');
+        s.src = 'https://appsforoffice.microsoft.com/lib/1/hosted/office.js';
+        s.async = false;
+        document.head.appendChild(s);
+      }
+    })();
+  </script>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased">
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+  <ribbon startFromScratch="false">
+    <tabs>
+      <tab id="OfficeAITab" label="OfficeAI 助手">
+        <group id="OfficeAIMainGroup" label="AI 办公助手">
+          <button
+            id="btnOpenTaskPane"
+            label="打开 AI 侧边栏"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
+          <button
+            id="btnPolish"
+            label="润色改写"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
+          <button
+            id="btnTranslate"
+            label="智能翻译"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
+          <button
+            id="btnSummarize"
+            label="摘要总结"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
+        </group>
+        <group id="OfficeAIToolsGroup" label="场景与设置">
+          <button
+            id="btnFormula"
+            label="表格公式/分析"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
+          <button
+            id="btnPptOutline"
+            label="PPT 大纲"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
+          <button
+            id="btnOpenDashboard"
+            label="模型与设置"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

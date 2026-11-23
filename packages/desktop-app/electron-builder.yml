@@ -1,0 +1,33 @@
+appId: com.officeai.desktop
+productName: OfficeAI
+copyright: Copyright © 2026 OfficeAI
+directories:
+  output: ../../release
+  buildResources: assets
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: ../addin-ui/dist
+    to: assets/addin-ui
+  - from: ../office-addin
+    to: assets/office-addin
+  - from: ../wps-addin
+    to: assets/wps-addin
+win:
+  icon: assets/icon-256.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: OfficeAI 智能办公助手
+portable:
+  artifactName: OfficeAI-Portable-${version}-win-x64.exe
