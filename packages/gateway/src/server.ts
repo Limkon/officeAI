@@ -97,13 +97,48 @@ async function readJsonBody<T = Record<string, unknown>>(req: IncomingMessage): 
   return JSON.parse(raw) as T;
 }
 
-function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
-  const origin = req.headers.origin || '*';
-  res.setHeader('Access-Control-Allow-Origin', origin);
-  res.setHeader('Vary', 'Origin');
+function isWithinDir(targetPath: string, baseDir: string): boolean {
+  const resolvedTarget = path.resolve(targetPath);
+  const resolvedBase = path.resolve(baseDir);
+  return resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + path.sep);
+}
+
+export function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true; // same-origin / curl / native desktop
+  if (origin === 'null') return true; // file:// or sandboxed Office/WPS webview
+  try {
+    const u = new URL(origin);
+    if (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]') {
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    }
+    if (
+      u.protocol === 'https:' &&
+      (u.hostname.endsWith('.office.com') ||
+        u.hostname.endsWith('.office365.com') ||
+        u.hostname.endsWith('.sharepoint.com') ||
+        u.hostname.endsWith('.live.com'))
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): boolean {
+  const origin = req.headers.origin;
+  if (!isAllowedOrigin(origin)) {
+    return false;
+  }
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  return true;
 }
 
 function serveStaticFile(
@@ -156,11 +191,16 @@ export async function startGateway(options?: {
   });
 
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
-    setCorsHeaders(req, res);
+    const allowedOrigin = setCorsHeaders(req, res);
 
     if (req.method === 'OPTIONS') {
-      res.writeHead(204);
+      res.writeHead(allowedOrigin ? 204 : 403);
       res.end();
+      return;
+    }
+
+    if (!allowedOrigin) {
+      sendJson(res, 403, { error: 'Origin not allowed' });
       return;
     }
 
@@ -200,12 +240,20 @@ export async function startGateway(options?: {
       }
 
       if (pathname === '/api/providers' && req.method === 'POST') {
-        const body = await readJsonBody<Partial<ProviderConfig> & { id: string }>(req);
-        if (!body.id) {
+        const body = await readJsonBody<Partial<ProviderConfig> & { id: string; clearApiKey?: boolean }>(req);
+        if (!body.id || !body.id.trim()) {
           sendJson(res, 400, { error: 'Provider id is required' });
           return;
         }
-        store.upsertProvider(body);
+        if (body.protocol && !['openai', 'anthropic', 'gemini', 'ollama'].includes(body.protocol)) {
+          sendJson(res, 400, { error: 'Unsupported provider protocol' });
+          return;
+        }
+        if (body.baseUrl && !/^https?:\/\//i.test(body.baseUrl.trim())) {
+          sendJson(res, 400, { error: 'Base URL must start with http:// or https://' });
+          return;
+        }
+        store.upsertProvider({ ...body, id: body.id.trim() });
         sendJson(res, 200, { ok: true, config: store.getPublicConfig() });
         return;
       }
@@ -213,7 +261,15 @@ export async function startGateway(options?: {
       const providerMatch = pathname.match(/^\/api\/providers\/([^/]+)$/);
       if (providerMatch && req.method === 'PUT') {
         const id = decodeURIComponent(providerMatch[1]);
-        const body = await readJsonBody<Partial<ProviderConfig>>(req);
+        const body = await readJsonBody<Partial<ProviderConfig> & { clearApiKey?: boolean }>(req);
+        if (body.protocol && !['openai', 'anthropic', 'gemini', 'ollama'].includes(body.protocol)) {
+          sendJson(res, 400, { error: 'Unsupported provider protocol' });
+          return;
+        }
+        if (body.baseUrl && !/^https?:\/\//i.test(body.baseUrl.trim())) {
+          sendJson(res, 400, { error: 'Base URL must start with http:// or https://' });
+          return;
+        }
         store.upsertProvider({ ...body, id });
         sendJson(res, 200, { ok: true, config: store.getPublicConfig() });
         return;
@@ -322,6 +378,11 @@ export async function startGateway(options?: {
 
       if (pathname === '/api/chat' && req.method === 'POST') {
         const body = await readJsonBody<ChatRequest>(req);
+        if (!Array.isArray(body.messages) || body.messages.length === 0) {
+          sendJson(res, 400, { error: 'messages 不能为空' });
+          return;
+        }
+
         const currentCfg = store.getConfig();
         const providerId = body.providerId || currentCfg.settings.activeProviderId;
         const provider = store.getProvider(providerId);
@@ -359,40 +420,58 @@ export async function startGateway(options?: {
           let reasoningText = '';
           let usage: { promptTokens?: number; completionTokens?: number } | undefined;
 
-          await adapter.streamChat({
-            provider,
-            model,
-            messages: body.messages,
-            temperature,
-            maxTokens,
-            signal: controller.signal,
-            onEvent: (ev) => {
-              if (ev.type === 'delta' && ev.content) fullText += ev.content;
-              if (ev.type === 'reasoning' && ev.content) reasoningText += ev.content;
-              if (ev.type === 'done' && ev.usage) usage = ev.usage;
+          try {
+            await adapter.streamChat({
+              provider,
+              model,
+              messages: body.messages,
+              temperature,
+              maxTokens,
+              signal: controller.signal,
+              onEvent: (ev) => {
+                if (ev.type === 'delta' && ev.content) fullText += ev.content;
+                if (ev.type === 'reasoning' && ev.content) reasoningText += ev.content;
+                if (ev.type === 'done' && ev.usage) usage = ev.usage;
+              }
+            });
+
+            store.recordUsage({
+              id: crypto.randomUUID(),
+              timestamp: new Date().toISOString(),
+              providerId: provider.id,
+              providerName: provider.name,
+              model,
+              hostApp: body.hostApp ?? 'standalone',
+              promptTokens: usage?.promptTokens,
+              completionTokens: usage?.completionTokens,
+              durationMs: Date.now() - startedAt,
+              success: true
+            });
+
+            sendJson(res, 200, {
+              content: fullText,
+              reasoning: reasoningText || undefined,
+              model,
+              providerId: provider.id,
+              usage
+            });
+          } catch (err) {
+            if (!controller.signal.aborted) {
+              const message = err instanceof Error ? err.message : String(err);
+              store.recordUsage({
+                id: crypto.randomUUID(),
+                timestamp: new Date().toISOString(),
+                providerId: provider.id,
+                providerName: provider.name,
+                model,
+                hostApp: body.hostApp ?? 'standalone',
+                durationMs: Date.now() - startedAt,
+                success: false,
+                error: message
+              });
+              sendJson(res, 502, { error: message });
             }
-          });
-
-          store.recordUsage({
-            id: crypto.randomUUID(),
-            timestamp: new Date().toISOString(),
-            providerId: provider.id,
-            providerName: provider.name,
-            model,
-            hostApp: body.hostApp ?? 'standalone',
-            promptTokens: usage?.promptTokens,
-            completionTokens: usage?.completionTokens,
-            durationMs: Date.now() - startedAt,
-            success: true
-          });
-
-          sendJson(res, 200, {
-            content: fullText,
-            reasoning: reasoningText || undefined,
-            model,
-            providerId: provider.id,
-            usage
-          });
+          }
           return;
         }
 
@@ -404,7 +483,9 @@ export async function startGateway(options?: {
         });
 
         const writeEvent = (ev: StreamEvent) => {
-          res.write(`data: ${JSON.stringify(ev)}\n\n`);
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify(ev)}\n\n`);
+          }
         };
 
         writeEvent({ type: 'meta', providerId: provider.id, model });
@@ -438,21 +519,28 @@ export async function startGateway(options?: {
             success: true
           });
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          store.recordUsage({
-            id: crypto.randomUUID(),
-            timestamp: new Date().toISOString(),
-            providerId: provider.id,
-            providerName: provider.name,
-            model,
-            hostApp: body.hostApp ?? 'standalone',
-            durationMs: Date.now() - startedAt,
-            success: false,
-            error: message
-          });
-          writeEvent({ type: 'error', error: message });
+          const isAborted =
+            controller.signal.aborted ||
+            (err instanceof Error && err.name === 'AbortError');
+          if (!isAborted) {
+            const message = err instanceof Error ? err.message : String(err);
+            store.recordUsage({
+              id: crypto.randomUUID(),
+              timestamp: new Date().toISOString(),
+              providerId: provider.id,
+              providerName: provider.name,
+              model,
+              hostApp: body.hostApp ?? 'standalone',
+              durationMs: Date.now() - startedAt,
+              success: false,
+              error: message
+            });
+            writeEvent({ type: 'error', error: message });
+          }
         } finally {
-          res.end();
+          if (!res.writableEnded) {
+            res.end();
+          }
         }
         return;
       }
@@ -498,30 +586,36 @@ export async function startGateway(options?: {
       if (pathname.startsWith('/office/')) {
         const rel = pathname.slice('/office/'.length) || 'manifest.xml';
         const target = path.resolve(paths.officeAddinDir, rel);
-        if (target.startsWith(paths.officeAddinDir) && serveStaticFile(res, target, getPortReplacements())) {
+        if (isWithinDir(target, paths.officeAddinDir) && serveStaticFile(res, target, getPortReplacements())) {
           return;
         }
+        sendJson(res, 404, { error: 'Not found', path: pathname });
+        return;
       }
 
       if (pathname === '/wps' || pathname.startsWith('/wps/')) {
         const rel = pathname === '/wps' ? 'index.html' : pathname.slice('/wps/'.length) || 'index.html';
         const target = path.resolve(paths.wpsAddinDir, rel);
-        if (target.startsWith(paths.wpsAddinDir) && serveStaticFile(res, target, getPortReplacements())) {
+        if (isWithinDir(target, paths.wpsAddinDir) && serveStaticFile(res, target, getPortReplacements())) {
           return;
         }
+        sendJson(res, 404, { error: 'Not found', path: pathname });
+        return;
       }
 
       // --- Static UI (Add-in TaskPane + Desktop Control Center) ---
       if (fs.existsSync(paths.uiDistDir)) {
         const cleanRel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
         const candidate = path.resolve(paths.uiDistDir, cleanRel);
-        if (candidate.startsWith(paths.uiDistDir) && serveStaticFile(res, candidate)) {
+        if (isWithinDir(candidate, paths.uiDistDir) && serveStaticFile(res, candidate)) {
           return;
         }
-        // SPA fallback
-        const indexHtml = path.join(paths.uiDistDir, 'index.html');
-        if (serveStaticFile(res, indexHtml)) {
-          return;
+        // SPA fallback only for extensionless client-side routes (never for missing assets or /api/*)
+        if (!pathname.startsWith('/api/') && !path.extname(pathname)) {
+          const indexHtml = path.join(paths.uiDistDir, 'index.html');
+          if (serveStaticFile(res, indexHtml)) {
+            return;
+          }
         }
       }
 

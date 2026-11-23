@@ -16,10 +16,11 @@ foreach ($xmlName in @("publish.xml", "jsplugins.xml")) {
 }
 
 $RegPath = "HKCU:\Software\Microsoft\Office\16.0\WEF\Developer"
-$AddinId = "b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a001"
-if (Test-Path $RegPath) {
-  Remove-ItemProperty -Path $RegPath -Name $AddinId -ErrorAction SilentlyContinue
-  Write-Host "已清理 Microsoft Office 注册项。"
+foreach ($AddinId in @("b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a00", "b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a001")) {
+  if (Test-Path $RegPath) {
+    Remove-ItemProperty -Path $RegPath -Name $AddinId -ErrorAction SilentlyContinue
+  }
 }
+Write-Host "已清理 Microsoft Office 注册项。"
 
 Write-Host "卸载完成。" -ForegroundColor Green

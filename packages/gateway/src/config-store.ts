@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -61,7 +62,6 @@ export class ConfigStore {
       const defaultProviders = createDefaultProviders();
       const savedProviders = Array.isArray(parsed.providers) ? parsed.providers : [];
 
-      // Keep saved providers and append any newly introduced presets
       const existingIds = new Set(savedProviders.map((p) => p.id));
       const mergedProviders: ProviderConfig[] = [
         ...savedProviders,
@@ -82,6 +82,12 @@ export class ConfigStore {
         prompts: mergedPrompts
       };
     } catch {
+      try {
+        const backupPath = `${this.configPath}.corrupt.${Date.now()}.bak`;
+        fs.copyFileSync(this.configPath, backupPath);
+      } catch {
+        // ignore backup error
+      }
       return defaults;
     }
   }
@@ -101,9 +107,29 @@ export class ConfigStore {
 
   private writeJsonAtomic(filePath: string, data: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tmpPath, filePath);
+    const tmpPath = `${filePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    const serialized = JSON.stringify(data, null, 2);
+    fs.writeFileSync(tmpPath, serialized, 'utf8');
+    try {
+      fs.renameSync(tmpPath, filePath);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'EPERM' || code === 'EBUSY') {
+        fs.writeFileSync(filePath, serialized, 'utf8');
+        try {
+          fs.unlinkSync(tmpPath);
+        } catch {
+          // ignore
+        }
+      } else {
+        try {
+          fs.unlinkSync(tmpPath);
+        } catch {
+          // ignore
+        }
+        throw err;
+      }
+    }
   }
 
   getConfig(): AppConfig {
@@ -133,10 +159,17 @@ export class ConfigStore {
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
-    this.config.settings = {
+    const next: AppSettings = {
       ...this.config.settings,
       ...patch
     };
+    if (typeof next.temperature === 'number') {
+      next.temperature = Math.min(2, Math.max(0, next.temperature));
+    }
+    if (typeof next.maxTokens === 'number') {
+      next.maxTokens = Math.min(128000, Math.max(0, Math.round(next.maxTokens)));
+    }
+    this.config.settings = next;
     this.writeJsonAtomic(this.configPath, this.config);
     return this.config.settings;
   }
@@ -146,22 +179,23 @@ export class ConfigStore {
   }
 
   upsertProvider(
-    provider: Partial<ProviderConfig> & { id: string }
+    provider: Partial<ProviderConfig> & { id: string; clearApiKey?: boolean }
   ): ProviderConfig {
-    const idx = this.config.providers.findIndex((p) => p.id === provider.id);
+    const { clearApiKey, ...rest } = provider;
+    const idx = this.config.providers.findIndex((p) => p.id === rest.id);
     if (idx === -1) {
       const created: ProviderConfig = {
-        id: provider.id,
-        presetId: provider.presetId ?? 'custom-cloud',
-        name: provider.name ?? provider.id,
-        category: provider.category ?? 'cloud',
-        protocol: provider.protocol ?? 'openai',
-        baseUrl: provider.baseUrl ?? 'https://api.openai.com/v1',
-        apiKey: provider.apiKey ?? '',
-        models: provider.models ?? ['gpt-4o'],
-        selectedModel: provider.selectedModel ?? provider.models?.[0] ?? 'gpt-4o',
-        enabled: provider.enabled ?? true,
-        extraHeaders: provider.extraHeaders
+        id: rest.id,
+        presetId: rest.presetId ?? 'custom-cloud',
+        name: rest.name ?? rest.id,
+        category: rest.category ?? 'cloud',
+        protocol: rest.protocol ?? 'openai',
+        baseUrl: rest.baseUrl ?? 'https://api.openai.com/v1',
+        apiKey: clearApiKey ? '' : (rest.apiKey ?? ''),
+        models: rest.models ?? ['gpt-4o'],
+        selectedModel: rest.selectedModel ?? rest.models?.[0] ?? 'gpt-4o',
+        enabled: rest.enabled ?? true,
+        extraHeaders: rest.extraHeaders
       };
       this.config.providers.push(created);
       this.writeJsonAtomic(this.configPath, this.config);
@@ -171,10 +205,13 @@ export class ConfigStore {
     const current = this.config.providers[idx];
     const updated: ProviderConfig = {
       ...current,
-      ...provider,
-      // Preserve existing API key if empty/undefined unless explicitly cleared via clearApiKey
-      apiKey:
-        provider.apiKey !== undefined ? provider.apiKey : current.apiKey
+      ...rest,
+      id: current.id,
+      apiKey: clearApiKey
+        ? ''
+        : rest.apiKey !== undefined
+          ? rest.apiKey
+          : current.apiKey
     };
     this.config.providers[idx] = updated;
     this.writeJsonAtomic(this.configPath, this.config);
@@ -185,6 +222,13 @@ export class ConfigStore {
     const before = this.config.providers.length;
     this.config.providers = this.config.providers.filter((p) => p.id !== id);
     if (this.config.providers.length !== before) {
+      if (this.config.settings.activeProviderId === id) {
+        const fallback =
+          this.config.providers.find((p) => p.enabled) || this.config.providers[0];
+        this.config.settings.activeProviderId = fallback?.id ?? '';
+        this.config.settings.activeModel =
+          fallback?.selectedModel || fallback?.models[0] || '';
+      }
       this.writeJsonAtomic(this.configPath, this.config);
       return true;
     }

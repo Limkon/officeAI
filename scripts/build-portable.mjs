@@ -55,5 +55,22 @@ try {
   });
   console.log(`Built portable package: ${zipPath}`);
 } catch {
-  console.log(`Built portable directory: ${outDir}`);
+  if (process.platform === 'win32') {
+    try {
+      execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          "Compress-Archive -Path 'OfficeAI-Portable' -DestinationPath 'OfficeAI-Windows-Portable.zip' -Force"
+        ],
+        { cwd: path.join(root, 'release') }
+      );
+      console.log(`Built portable package via Compress-Archive: ${zipPath}`);
+    } catch {
+      console.log(`Built portable directory: ${outDir}`);
+    }
+  } else {
+    console.log(`Built portable directory: ${outDir}`);
+  }
 }

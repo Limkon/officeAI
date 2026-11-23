@@ -49,12 +49,12 @@
       '&t=' +
       Date.now();
 
+    // Try reusing existing TaskPane in its own try/catch so stale IDs fall back to CreateTaskPane
     try {
       var tsId = null;
       if (app.PluginStorage && typeof app.PluginStorage.getItem === 'function') {
         tsId = app.PluginStorage.getItem(TASKPANE_KEY);
       }
-
       if (tsId && typeof app.GetTaskPane === 'function') {
         var existingPane = app.GetTaskPane(tsId);
         if (existingPane) {
@@ -65,7 +65,11 @@
           return;
         }
       }
+    } catch (e) {
+      // ignore stale taskpane reference and recreate below
+    }
 
+    try {
       if (typeof app.CreateTaskPane === 'function') {
         var pane = app.CreateTaskPane(targetUrl, 'OfficeAI 智能助手');
         if (pane) {
@@ -75,12 +79,15 @@
           if (app.PluginStorage && typeof app.PluginStorage.setItem === 'function') {
             app.PluginStorage.setItem(TASKPANE_KEY, pane.ID);
           }
+          return;
         }
       }
     } catch (err) {
-      if (typeof app.ShowDialog === 'function') {
-        app.ShowDialog(targetUrl, 'OfficeAI 智能助手', 960, 680, false);
-      }
+      // fallback to dialog below
+    }
+
+    if (typeof app.ShowDialog === 'function') {
+      app.ShowDialog(targetUrl, 'OfficeAI 智能助手', 960, 680, false);
     }
   }
 
@@ -94,7 +101,7 @@
   };
 
   window.GetImage = function () {
-    return 'assets/icon-32.png';
+    return GATEWAY_URL + '/wps/assets/icon-32.png';
   };
 
   window.OnAction = function (control) {
