@@ -38,6 +38,6 @@ nsis:
   include: build/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: false
   shortcutName: OfficeAI
