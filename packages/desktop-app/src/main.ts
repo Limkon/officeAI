@@ -1,11 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from 'electron';
 import { startGateway, type RunningGateway } from '@officeai/gateway';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;

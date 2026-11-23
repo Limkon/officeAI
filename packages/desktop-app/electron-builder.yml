@@ -1,11 +1,14 @@
 appId: com.officeai.desktop
 productName: OfficeAI
 copyright: Copyright © 2026 OfficeAI
+electronVersion: "33.2.1"
+npmRebuild: false
 directories:
   output: ../../release
   buildResources: assets
 files:
-  - dist/**/*
+  - dist/main.cjs
+  - assets/**/*
   - package.json
 extraResources:
   - from: ../addin-ui/dist
@@ -28,6 +31,6 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: OfficeAI 智能办公助手
+  shortcutName: OfficeAI
 portable:
   artifactName: OfficeAI-Portable-${version}-win-x64.exe

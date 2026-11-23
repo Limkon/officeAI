@@ -2,20 +2,20 @@
   "name": "@officeai/desktop-app",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
-  "main": "./dist/main.js",
+  "description": "OfficeAI Windows Desktop Companion for Microsoft Office and WPS Office",
+  "author": "OfficeAI",
+  "license": "MIT",
+  "main": "./dist/main.cjs",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node build.mjs",
     "start": "electron .",
-    "dist:win": "electron-builder --win --x64"
-  },
-  "dependencies": {
-    "@officeai/gateway": "*",
-    "@officeai/shared": "*"
+    "dist:win": "electron-builder --win --x64 --config electron-builder.yml"
   },
   "devDependencies": {
+    "@officeai/gateway": "*",
+    "@officeai/shared": "*",
     "@types/node": "^22.10.2",
-    "electron": "^33.2.1",
+    "electron": "33.2.1",
     "electron-builder": "^25.1.8",
     "typescript": "^5.7.2"
   }
