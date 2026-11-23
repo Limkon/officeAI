@@ -50,7 +50,8 @@ namespace OfficeAI
             if (args.Length > 0 && args[0] == "--once")
             {
                 // 手动跑一次：便于排查"为什么没自动启动"
-                bool running = HasOfficeProcess(out List<string> names);
+                List<string> names;
+                bool running = HasOfficeProcess(out names);
                 Log("--once: office=" + (running ? string.Join(",", names) : "none")
                     + " gateway=" + (IsGatewayAlive() ? "up" : "down"));
                 if (running && !IsGatewayAlive() && ReadLaunchTrigger() != "manual")
@@ -61,7 +62,8 @@ namespace OfficeAI
             }
 
             // 单实例：避免计划任务重复拉起
-            using (var mutex = new Mutex(true, "Global\\OfficeAI.Watcher", out bool isFirst))
+            bool isFirst;
+            using (var mutex = new Mutex(true, "Global\\OfficeAI.Watcher", out isFirst))
             {
                 if (!isFirst)
                 {
@@ -108,7 +110,8 @@ namespace OfficeAI
                         return;
                     }
 
-                    bool officeRunning = HasOfficeProcess(out List<string> names);
+                    List<string> names;
+                    bool officeRunning = HasOfficeProcess(out names);
 
                     if (officeRunning && !officeWasRunning)
                     {
