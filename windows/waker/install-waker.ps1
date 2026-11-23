@@ -66,7 +66,7 @@ function Resolve-Dll {
   Write-Host "正在编译唤醒器..." -ForegroundColor Cyan
   & $csc /nologo /target:library /platform:anycpu /optimize+ `
     /out:"$out" `
-    /reference:System.dll "$source"
+    /reference:System.dll /reference:System.Core.dll "$source"
 
   if (-not (Test-Path $out)) { throw '编译失败。' }
   return $out

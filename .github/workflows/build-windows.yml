@@ -39,7 +39,8 @@ jobs:
 
       - name: Build Office watcher (background listener)
         shell: pwsh
-        run: ./windows/waker/install-watcher.ps1 -Action Install -Build
+        # 只编译，不注册计划任务（CI 环境无需自启）
+        run: ./windows/waker/install-watcher.ps1 -Action Status -Build
 
       - name: Verify waker DLL built
         shell: pwsh

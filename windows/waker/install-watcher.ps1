@@ -31,11 +31,16 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ExeName = 'OfficeAI.Watcher.exe'
 
 function Build-Exe {
-  $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-  if (-not (Test-Path $csc)) {
-    $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+  # 优先 Roslyn 编译器（支持新版 C#），否则退回 .NET Framework 自带的 C# 5 编译器。
+  # 源码本身已按 C# 5 编写（无 out var / 字符串插值 / ?.），两条路都能编。
+  $csc = $null
+  foreach ($candidate in @(
+    (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+    (Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe')
+  )) {
+    if (Test-Path $candidate) { $csc = $candidate; break }
   }
-  if (-not (Test-Path $csc)) {
+  if (-not $csc) {
     throw '未找到 csc.exe（.NET Framework 4.x）。'
   }
   $source = Join-Path $ScriptDir 'Watcher.cs'
@@ -47,7 +52,8 @@ function Build-Exe {
 
   Write-Host '正在编译后台监听器...' -ForegroundColor Cyan
   # /target:winexe 表示没有控制台窗口
-  & $csc /nologo /target:winexe /platform:anycpu /optimize+ /out:"$exe" /reference:System.dll "$source"
+  & $csc /nologo /target:winexe /platform:anycpu /optimize+ /out:"$exe" `
+    /reference:System.dll /reference:System.Core.dll "$source"
   if (-not (Test-Path $exe)) { throw '编译失败。' }
   return $exe
 }
