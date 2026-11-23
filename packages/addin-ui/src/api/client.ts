@@ -137,6 +137,15 @@ export const apiClient = {
     return requestJson('/api/windows/trust-cert', { method: 'POST' });
   },
 
+  /** Registers officeai:// so Office users can start the gateway with one click */
+  registerProtocol(): Promise<IntegrationResult> {
+    return requestJson('/api/windows/register-protocol', { method: 'POST' });
+  },
+
+  unregisterProtocol(): Promise<IntegrationResult> {
+    return requestJson('/api/windows/unregister-protocol', { method: 'POST' });
+  },
+
   async streamChat(
     req: ChatRequest,
     onEvent: (event: StreamEvent) => void,

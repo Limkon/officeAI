@@ -20,6 +20,9 @@ export const App: React.FC = () => {
     }
     return 'taskpane';
   });
+  // Dashboard is a management surface: always available from the tray,
+  // even when the page itself is opened by Word / Excel / WPS.
+  const isDashboard = mode === 'dashboard';
 
   const refreshConfig = useCallback(async () => {
     const cfg = await apiClient.getConfig();
@@ -63,7 +66,7 @@ export const App: React.FC = () => {
     );
   }
 
-  if (mode === 'dashboard') {
+  if (isDashboard) {
     return (
       <DashboardView
         config={config}
@@ -75,6 +78,26 @@ export const App: React.FC = () => {
           }
         }}
       />
+    );
+  }
+
+  if (host.embedded) {
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-sm space-y-3 text-center">
+          <div className="text-sm font-bold text-amber-700">OfficeAI 本地服务未运行</div>
+          <p className="text-xs leading-relaxed text-slate-600">
+            助手按需启动，不会开机自启。请先启动 OfficeAI 本地服务，再点击下方按钮重新连接；
+            之后在 Office / WPS 中即可正常使用侧边栏。
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-medium text-white"
+          >
+            我已启动，重新连接
+          </button>
+        </div>
+      </div>
     );
   }
 

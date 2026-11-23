@@ -8,7 +8,9 @@ import {
   PROVIDER_PRESETS,
   parseOfficeActions,
   stripStreamingOfficeActionTags,
-  buildOfficeAgentSystemPrompt
+  buildOfficeAgentSystemPrompt,
+  buildGatewayLaunchUrl,
+  parseGatewayLaunchUrl
 } from './index.js';
 
 test('ThinkTagSplitter splits reasoning and answer across chunk boundaries', () => {
@@ -73,4 +75,24 @@ test('stripStreamingOfficeActionTags suppresses partial opening tags during stre
   assert.equal(stripStreamingOfficeActionTags('正在处理\n<office_ac'), '正在处理');
   assert.equal(stripStreamingOfficeActionTags('完成\n<office_action>{"action":"set_cells"'), '完成');
   assert.equal(stripStreamingOfficeActionTags('<office_action>{"action":'), '');
+});
+
+test('buildGatewayLaunchUrl / parseGatewayLaunchUrl round-trip loopback only', () => {
+  const url = buildGatewayLaunchUrl('http://127.0.0.1:18080', 'wps');
+  assert.ok(url.startsWith('officeai://activate/'));
+  assert.equal(parseGatewayLaunchUrl(url), 'http://127.0.0.1:18080');
+
+  assert.equal(parseGatewayLaunchUrl(buildGatewayLaunchUrl('http://localhost:19000')), 'http://localhost:19000');
+
+  // Reject anything that is not a loopback http endpoint
+  assert.equal(parseGatewayLaunchUrl('officeai://activate/https%3A%2F%2Fevil.example.com'), undefined);
+  assert.equal(parseGatewayLaunchUrl('https://example.com'), undefined);
+  assert.equal(parseGatewayLaunchUrl('officeai://activate/not-a-url'), undefined);
+});
+
+test('createDefaultConfig defaults to on-demand launch (no autostart)', () => {
+  const cfg = createDefaultConfig();
+  assert.equal(cfg.settings.launchMode, 'on-demand');
+  assert.equal(cfg.settings.autoStartGateway, false);
+  assert.equal(cfg.settings.exitWithOffice, true);
 });

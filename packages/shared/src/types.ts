@@ -59,6 +59,14 @@ export interface PromptAction {
   builtIn?: boolean;
 }
 
+/**
+ * 网关启动策略：
+ * - manual    仅手动启动（桌面客户端 / Start-OfficeAI.bat）
+ * - on-demand 由 Office / WPS 加载项在用到时自动拉起（推荐）
+ * - always    桌面客户端启动即常驻（不做开机自启）
+ */
+export type GatewayLaunchMode = 'manual' | 'on-demand' | 'always';
+
 export interface AppSettings {
   httpPort: number;
   httpsPort: number;
@@ -68,7 +76,15 @@ export interface AppSettings {
   maxTokens: number;
   systemPrompt: string;
   language: 'zh-CN' | 'en-US';
+  /** 桌面客户端启动时是否立即拉起网关（= launchMode 为 always） */
   autoStartGateway: boolean;
+  launchMode: GatewayLaunchMode;
+  /** 自定义启动命令；为空时由加载项按安装位置自动探测 */
+  gatewayLaunchCommand: string;
+  /** Word/Excel/PPT/WPS 全部关闭后自动退出网关（仅 on-demand 生效） */
+  exitWithOffice: boolean;
+  /** 最后一段时间无请求后自动退出；0 表示不按空闲退出 */
+  idleExitMinutes: number;
 }
 
 export interface UsageRecord {
@@ -135,6 +151,12 @@ export interface LocalRuntimeStatus {
   error?: string;
 }
 
+export interface LaunchTargetInfo {
+  command: string;
+  kind: 'bat' | 'exe' | 'command' | 'none';
+  source: string;
+}
+
 export interface WindowsOfficeStatus {
   platform: string;
   isWindows: boolean;
@@ -142,6 +164,15 @@ export interface WindowsOfficeStatus {
   gatewayHttpsUrl: string;
   certExists: boolean;
   certTrusted: boolean;
+  /** How OfficeAI is started on demand, and whether the one-click link is ready */
+  launch?: {
+    target: LaunchTargetInfo;
+    protocolRegistered: boolean;
+    startPageUrl: string;
+    launchUrl: string;
+    officeRunning: boolean;
+    runningProcesses: string[];
+  };
   msOffice: {
     detected: boolean;
     version?: string;
@@ -154,5 +185,8 @@ export interface WindowsOfficeStatus {
     addonsDir?: string;
     installed: boolean;
     jspluginsXmlPath?: string;
+    /** Local (offline) add-in folder, used for on-demand launch */
+    localAddinPath?: string;
+    mode?: 'local' | 'online' | 'none';
   };
 }

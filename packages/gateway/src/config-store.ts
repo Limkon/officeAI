@@ -33,6 +33,27 @@ export interface PublicAppConfig {
   prompts: PromptAction[];
 }
 
+const LAUNCH_MODES = ['manual', 'on-demand', 'always'] as const;
+
+/**
+ * Upgrades legacy configs (which only had `autoStartGateway`) and clamps
+ * launch-related settings to safe values.
+ */
+export function normalizeSettings(settings: AppSettings): AppSettings {
+  const next: AppSettings = { ...settings };
+
+  if (!LAUNCH_MODES.includes(next.launchMode)) {
+    next.launchMode = next.autoStartGateway ? 'always' : 'on-demand';
+  }
+  next.autoStartGateway = next.launchMode === 'always';
+  next.gatewayLaunchCommand = typeof next.gatewayLaunchCommand === 'string' ? next.gatewayLaunchCommand.trim() : '';
+  next.exitWithOffice = next.exitWithOffice !== false;
+  const idle = Number(next.idleExitMinutes);
+  next.idleExitMinutes = Number.isFinite(idle) ? Math.min(240, Math.max(0, Math.round(idle))) : 15;
+
+  return next;
+}
+
 export class ConfigStore {
   readonly dataDir: string;
   readonly configPath: string;
@@ -75,9 +96,22 @@ export class ConfigStore {
         ...DEFAULT_PROMPT_ACTIONS.filter((p) => !savedPromptIds.has(p.id))
       ];
 
+      const hasLaunchSettings = Boolean((parsed.settings as Partial<AppSettings> | undefined)?.launchMode);
+      const mergedSettings = normalizeSettings({
+        ...defaults.settings,
+        ...(parsed.settings ?? {})
+      });
+
+      // Legacy configs created before launchMode existed had no on-demand
+      // support: treat them as "always on" to preserve previous behaviour.
+      if (!hasLaunchSettings && !(parsed.settings as Partial<AppSettings> | undefined)?.autoStartGateway) {
+        mergedSettings.launchMode = 'always';
+        mergedSettings.autoStartGateway = true;
+      }
+
       return {
         version: parsed.version ?? defaults.version,
-        settings: { ...defaults.settings, ...(parsed.settings ?? {}) },
+        settings: mergedSettings,
         providers: mergedProviders,
         prompts: mergedPrompts
       };
@@ -159,10 +193,15 @@ export class ConfigStore {
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
-    const next: AppSettings = {
+    const merged: AppSettings = {
       ...this.config.settings,
       ...patch
     };
+    // Legacy clients only send `autoStartGateway`; translate to launchMode
+    if (patch.launchMode === undefined && patch.autoStartGateway !== undefined) {
+      merged.launchMode = patch.autoStartGateway ? 'always' : 'on-demand';
+    }
+    const next: AppSettings = normalizeSettings(merged);
     if (typeof next.temperature === 'number') {
       next.temperature = Math.min(2, Math.max(0, next.temperature));
     }

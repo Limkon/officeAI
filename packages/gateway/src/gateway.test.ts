@@ -217,3 +217,68 @@ test('Gateway serves config, handles CORS/path-traversal, stream_options fallbac
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('On-demand launch: settings normalize, start page & office status are served', async () => {
+  const dataDir = createTempDir('officeai-launch-');
+  const gw = await startGateway({
+    dataDir,
+    httpPort: 0,
+    httpsPort: 0,
+    enableHttps: false,
+    launcher: 'test'
+  });
+
+  try {
+    // Default is on-demand, never autostart
+    const cfgRes = await fetch(`${gw.httpUrl}/api/config`);
+    const cfg = (await cfgRes.json()) as { settings: { launchMode: string; autoStartGateway: boolean } };
+    assert.equal(cfg.settings.launchMode, 'on-demand');
+    assert.equal(cfg.settings.autoStartGateway, false);
+
+    // Legacy payload `{ autoStartGateway: true }` maps to launchMode=always
+    const putRes = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoStartGateway: true })
+    });
+    const putJson = (await putRes.json()) as { settings: { launchMode: string } };
+    assert.equal(putJson.settings.launchMode, 'always');
+
+    const idleRes = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ launchMode: 'on-demand', idleExitMinutes: 999 })
+    });
+    const idleJson = (await idleRes.json()) as { settings: { idleExitMinutes: number } };
+    assert.equal(idleJson.settings.idleExitMinutes, 240);
+
+    // The launcher page is what WPS/Office users see when the gateway is down
+    const startRes = await fetch(`${gw.httpUrl}/start`);
+    assert.equal(startRes.status, 200);
+    const startHtml = await startRes.text();
+    assert.ok(startHtml.includes('OfficeAI 服务未启动'));
+    assert.ok(startHtml.includes('officeai://activate/'));
+
+    // /api/office/status is polled by the local WPS add-in
+    const statusRes = await fetch(`${gw.httpUrl}/api/office/status?app=wps`);
+    assert.equal(statusRes.status, 200);
+    const status = (await statusRes.json()) as {
+      running: boolean;
+      gatewayHttpUrl: string;
+      startPageUrl: string;
+      launchUrl: string;
+      launchTarget: unknown;
+    };
+    assert.equal(status.running, true);
+    assert.equal(status.gatewayHttpUrl, gw.httpUrl);
+    assert.equal(status.startPageUrl, `${gw.httpUrl}/start`);
+    assert.ok(status.launchUrl.startsWith('officeai://activate/'));
+
+    // WPS bootstrap launcher page is bundled with the add-in
+    const bootRes = await fetch(`${gw.httpUrl}/wps/bootstrap.html`);
+    assert.equal(bootRes.status, 200);
+  } finally {
+    await gw.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

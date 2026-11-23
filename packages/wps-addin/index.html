@@ -7,8 +7,10 @@
 </head>
 <body>
   <script>
-    if (typeof window.Application === 'undefined') {
-      window.location.replace('http://127.0.0.1:18080/?host=wps');
+    // `main.js` (loaded above) performs the health check and decides whether to
+    // redirect to the gateway UI or to show the embedded launcher page.
+    if (window.OfficeAIBootstrap) {
+      window.OfficeAIBootstrap('wps');
     }
   </script>
 </body>

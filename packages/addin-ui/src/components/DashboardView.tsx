@@ -81,6 +81,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [winActionMsg, setWinActionMsg] = useState<string | null>(null);
   const [winBusy, setWinBusy] = useState(false);
 
+  // On-demand launch settings
+  const [launchMode, setLaunchMode] = useState<'manual' | 'on-demand' | 'always'>(
+    config.settings.launchMode ?? 'on-demand'
+  );
+  const [gatewayLaunchCommand, setGatewayLaunchCommand] = useState(
+    config.settings.gatewayLaunchCommand ?? ''
+  );
+  const [exitWithOffice, setExitWithOffice] = useState(config.settings.exitWithOffice !== false);
+  const [idleExitMinutes, setIdleExitMinutes] = useState(config.settings.idleExitMinutes ?? 15);
+  const [savingLaunch, setSavingLaunch] = useState(false);
+  const [launchMsg, setLaunchMsg] = useState<string | null>(null);
+
   // Usage state
   const [usage, setUsage] = useState<UsageRecord[]>([]);
 
@@ -202,6 +214,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setWinActionMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setWinBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    setLaunchMode(config.settings.launchMode ?? 'on-demand');
+    setGatewayLaunchCommand(config.settings.gatewayLaunchCommand ?? '');
+    setExitWithOffice(config.settings.exitWithOffice !== false);
+    setIdleExitMinutes(config.settings.idleExitMinutes ?? 15);
+  }, [
+    config.settings.launchMode,
+    config.settings.gatewayLaunchCommand,
+    config.settings.exitWithOffice,
+    config.settings.idleExitMinutes
+  ]);
+
+  const handleSaveLaunchSettings = async () => {
+    setSavingLaunch(true);
+    setLaunchMsg(null);
+    try {
+      await apiClient.updateSettings({
+        launchMode,
+        autoStartGateway: launchMode === 'always',
+        gatewayLaunchCommand: gatewayLaunchCommand.trim(),
+        exitWithOffice,
+        idleExitMinutes
+      });
+      await onRefreshConfig();
+      setLaunchMsg('启动方式已保存');
+    } catch (err) {
+      setLaunchMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingLaunch(false);
     }
   };
 
@@ -786,7 +830,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div>
                     <h3 className="text-base font-bold text-slate-900">WPS Office (文字 / 表格 / 演示)</h3>
                     <p className="mt-1 text-xs text-slate-500">
-                      通过 WPS 原生 JS 加载项集成，支持个人免费版与专业版，安装后顶部将出现「OfficeAI 助手」选项卡。
+                      本地离线加载项：即使 OfficeAI 服务未启动，「OfficeAI 助手」选项卡也会显示，点击按钮时自动拉起服务。兼容个人免费版与专业版。
                     </p>
                   </div>
                   <span
@@ -803,7 +847,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
                   <div>环境检测: {winStatus?.wps.detected ? '已检测到 WPS 目录' : '未检测到或非 Windows 环境'}</div>
                   <div className="truncate">加载项目录: {winStatus?.wps.addonsDir || '%APPDATA%\\kingsoft\\wps\\jsaddons'}</div>
-                  <div>网关地址: {winStatus?.gatewayHttpUrl}/wps/</div>
+                  <div>
+                    加载方式:{' '}
+                    {winStatus?.wps.mode === 'local'
+                      ? '本地离线加载项（点击按钮时可自动拉起服务）'
+                      : winStatus?.wps.mode === 'online'
+                        ? '在线加载项（需要先启动服务，重新「一键安装」可切换为本地模式）'
+                        : '未安装'}
+                  </div>
+                  {winStatus?.wps.localAddinPath && (
+                    <div className="truncate">本地插件目录: {winStatus.wps.localAddinPath}</div>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -885,12 +939,143 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             </div>
 
+            {/* On-demand launch settings */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleSaveLaunchSettings();
+              }}
+              className="rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs space-y-4"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">启动方式（按需启动，不做开机自启）</h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    助手只在真正需要时运行：打开 Office / WPS 并点击「OfficeAI 助手」时自动拉起，关闭后自动退出。
+                  </p>
+                </div>
+                {launchMsg && <span className="text-xs font-medium text-emerald-600">{launchMsg}</span>}
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                {[
+                  {
+                    id: 'on-demand' as const,
+                    title: '按需启动（推荐）',
+                    desc: '点击加载项按钮时自动启动，全部 Office/WPS 关闭后自动退出'
+                  },
+                  {
+                    id: 'always' as const,
+                    title: '常驻托盘',
+                    desc: '启动 OfficeAI 后一直后台运行，直到手动退出'
+                  },
+                  {
+                    id: 'manual' as const,
+                    title: '仅手动',
+                    desc: '只能通过桌面图标 / 批处理启动，加载项只做提示'
+                  }
+                ].map((option) => (
+                  <label
+                    key={option.id}
+                    className={`cursor-pointer rounded-xl border p-3 text-xs transition ${
+                      launchMode === option.id
+                        ? 'border-blue-500 bg-blue-50/60'
+                        : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="launchMode"
+                      className="mr-2"
+                      checked={launchMode === option.id}
+                      onChange={() => setLaunchMode(option.id)}
+                    />
+                    <span className="font-semibold text-slate-900">{option.title}</span>
+                    <p className="mt-1 leading-relaxed text-slate-500">{option.desc}</p>
+                  </label>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    启动命令（留空自动探测 OfficeAI.exe / Start-OfficeAI.bat）
+                  </label>
+                  <input
+                    type="text"
+                    value={gatewayLaunchCommand}
+                    onChange={(e) => setGatewayLaunchCommand(e.target.value)}
+                    placeholder="C:\Users\me\AppData\Local\Programs\OfficeAI\OfficeAI.exe"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    空闲自动退出（分钟，0 = 不按空闲退出）
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={240}
+                    value={idleExitMinutes}
+                    onChange={(e) => setIdleExitMinutes(Number(e.target.value))}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={exitWithOffice}
+                  onChange={(e) => setExitWithOffice(e.target.checked)}
+                />
+                <span>Word / Excel / PowerPoint / WPS 全部关闭后自动退出网关</span>
+              </label>
+
+              <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+                <div>
+                  当前启动程序：
+                  {winStatus?.launch?.target.command ? (
+                    <span className="font-mono">{winStatus.launch.target.command}</span>
+                  ) : (
+                    <span className="text-amber-600">未检测到，请在上方手动填写</span>
+                  )}
+                </div>
+                <div>
+                  一键启动协议 officeai://：
+                  {winStatus?.launch?.protocolRegistered ? '已注册' : '未注册'}
+                  {!winStatus?.launch?.protocolRegistered && (
+                    <button
+                      type="button"
+                      disabled={winBusy}
+                      onClick={() => void handleWinAction(() => apiClient.registerProtocol())}
+                      className="ml-2 rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      立即注册并创建桌面快捷方式
+                    </button>
+                  )}
+                </div>
+                <div>Office / WPS 进程：{winStatus?.launch?.officeRunning ? '运行中' : '未检测到'}</div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={savingLaunch}
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {savingLaunch ? '保存中...' : '保存启动方式'}
+                </button>
+              </div>
+            </form>
+
             {/* Instructions */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 text-xs text-slate-600 space-y-2">
               <h4 className="text-sm font-semibold text-slate-900">Windows 使用说明</h4>
-              <p>1. 使用时请保持 OfficeAI 桌面客户端（或后台网关）处于运行状态。</p>
-              <p>2. <strong>WPS 用户</strong>：点击「一键安装到 WPS Office」后重启 WPS，在顶部功能区「OfficeAI 助手」即可打开侧边栏。</p>
-              <p>3. <strong>Microsoft Office 用户</strong>：点击「一键安装到 MS Office」将自动信任本地自签证书并注册 Manifest，重启 Word/Excel/PPT 后在「开始」选项卡右侧或「插入 → 我的加载项 → 开发人员加载项」中点击启动。</p>
+              <p>1. 默认「按需启动」：无需开机自启，也不会常驻后台——关闭所有 Office / WPS 后网关自动退出。</p>
+              <p>2. <strong>WPS 用户</strong>：安装后加载项是本地离线版，即使服务没启动也能出现在功能区；点击任意按钮会自动拉起网关（首次可能弹出一次 WPS 安全确认）。</p>
+              <p>3. <strong>Microsoft Office 用户</strong>：Office 加载项必须由本地服务提供，无法自行启动进程。请先注册 <code>officeai://</code> 协议（上方按钮），之后点击桌面「OfficeAI 启动」快捷方式即可拉起网关，再打开 Word/Excel/PPT 使用。</p>
             </div>
           </div>
         )}

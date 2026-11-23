@@ -17,6 +17,10 @@ extraResources:
     to: assets/office-addin
   - from: ../wps-addin
     to: assets/wps-addin
+protocols:
+  - name: OfficeAI 一键启动
+    schemes:
+      - officeai
 win:
   icon: assets/icon-256.png
   target:

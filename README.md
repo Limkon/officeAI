@@ -29,7 +29,13 @@
 - **Microsoft Office（2016 / 2019 / 2021 / Microsoft 365）**：
   - 基于 Office Web Add-in（`Office.js`）+ 自动生成并信任的本地 HTTPS 证书（`Cert:\CurrentUser\Root`），一键旁加载到 Word / Excel / PowerPoint。
 
-### 3. Windows 桌面托盘控制中心
+### 3. 按需启动（不做开机自启）
+- **不写任何自启项**：不使用注册表 `Run`、启动文件夹或计划任务，重启电脑后不会自动运行。
+- **WPS 全自动**：加载项以**本地离线加载项**安装到 `%APPDATA%\kingsoft\wps\jsaddons`，WPS 启动时直接读取，不依赖网关；点击「OfficeAI 助手」按钮若发现服务未启动，会自动拉起 OfficeAI（首次可能弹一次 WPS 安全确认）。
+- **Microsoft Office 一键启动**：Office Web Add-in 受沙箱限制无法启动本地进程，因此注册 `officeai://` 协议并生成桌面「OfficeAI 启动」快捷方式，点一下即可拉起网关，再打开 Word / Excel / PPT。
+- **用完即走**：所有 Office / WPS 进程关闭后（或空闲超过设定分钟数）网关自动退出，不在后台常驻。
+
+### 4. Windows 桌面托盘控制中心
 - 提供 Electron Windows 桌面应用（`OfficeAI-Setup.exe` 安装版 & Portable 便携版）与命令行/便携脚本版。
 - 内置模型配置中心、连通性测速与模型列表拉取、Office/WPS 一键安装卸载向导、自定义快捷指令库与调用日志统计。
 
@@ -77,14 +83,25 @@ npm test
 npm run package:portable
 ```
 
-在 Windows 上安装加载项并启动服务：
+在 Windows 上安装加载项（默认按需启动，不需要开机自启）：
 ```powershell
-# 一键注册 WPS 与 Microsoft Office 加载项
+# 一键安装：WPS 本地离线加载项 + officeai:// 一键启动协议 + Microsoft Office 加载项
 .\scripts\windows\Install-OfficeAI.bat
-
-# 启动本地 AI 网关并打开配置中心
-.\scripts\windows\Start-OfficeAI.bat
 ```
+
+日常使用：
+- **WPS**：直接打开 WPS → 点击顶部「OfficeAI 助手」，服务会自动拉起。
+- **Microsoft Office**：双击桌面「OfficeAI 启动」→ 再打开 Word / Excel / PPT。
+- 手动启动（调试用）：`.\scripts\windows\Start-OfficeAI.bat`
+
+启动行为可在配置中心 →「Office / WPS 安装集成」→「启动方式」中调整：
+| 模式 | 说明 |
+| --- | --- |
+| 按需启动（默认） | 点击加载项时自动启动；Office / WPS 全部关闭或空闲 N 分钟后自动退出 |
+| 常驻托盘 | 启动后一直在后台运行，直到手动退出 |
+| 仅手动 | 加载项只做提示，必须手动运行 OfficeAI |
+
+也可填写自定义启动命令（留空时自动探测 `OfficeAI.exe` 或 `Start-OfficeAI.bat`）。
 
 如需构建 Electron Windows `.exe` 安装包（在 Windows 环境下执行）：
 ```bash

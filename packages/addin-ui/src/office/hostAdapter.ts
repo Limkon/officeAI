@@ -22,6 +22,8 @@ export interface HostContextInfo {
   suite: OfficeHostSuite;
   app: OfficeHostApp;
   label: string;
+  /** True when this page is hosted by Word/Excel/PowerPoint (Office.js available) */
+  embedded?: boolean;
 }
 
 export interface SelectionSnapshot {
@@ -167,13 +169,13 @@ export async function detectHostContext(): Promise<HostContextInfo> {
 
       const host = info?.host;
       if (host === window.Office.HostType?.Word) {
-        return { suite: 'ms-office', app: 'word', label: getHostLabel('word') };
+        return { suite: 'ms-office', app: 'word', label: getHostLabel('word'), embedded: true };
       }
       if (host === window.Office.HostType?.Excel) {
-        return { suite: 'ms-office', app: 'excel', label: getHostLabel('excel') };
+        return { suite: 'ms-office', app: 'excel', label: getHostLabel('excel'), embedded: true };
       }
       if (host === window.Office.HostType?.PowerPoint) {
-        return { suite: 'ms-office', app: 'powerpoint', label: getHostLabel('powerpoint') };
+        return { suite: 'ms-office', app: 'powerpoint', label: getHostLabel('powerpoint'), embedded: true };
       }
     } catch {
       // fall through
@@ -184,19 +186,19 @@ export async function detectHostContext(): Promise<HostContextInfo> {
   const wpsApp = getWpsApp();
   if (wpsApp || hostHint === 'wps') {
     if (appHint && appHint.startsWith('wps-')) {
-      return { suite: 'wps', app: appHint, label: getHostLabel(appHint) };
+      return { suite: 'wps', app: appHint, label: getHostLabel(appHint), embedded: true };
     }
     try {
       if (wpsApp?.ActiveWorkbook || String(wpsApp?.Name || '').toLowerCase().includes('et')) {
-        return { suite: 'wps', app: 'wps-spreadsheets', label: getHostLabel('wps-spreadsheets') };
+        return { suite: 'wps', app: 'wps-spreadsheets', label: getHostLabel('wps-spreadsheets'), embedded: true };
       }
       if (wpsApp?.ActivePresentation || String(wpsApp?.Name || '').toLowerCase().includes('wpp')) {
-        return { suite: 'wps', app: 'wps-presentation', label: getHostLabel('wps-presentation') };
+        return { suite: 'wps', app: 'wps-presentation', label: getHostLabel('wps-presentation'), embedded: true };
       }
     } catch {
       // default writer
     }
-    return { suite: 'wps', app: 'wps-writer', label: getHostLabel('wps-writer') };
+    return { suite: 'wps', app: 'wps-writer', label: getHostLabel('wps-writer'), embedded: true };
   }
 
   if (appHint && appHint !== 'standalone') {
@@ -207,7 +209,7 @@ export async function detectHostContext(): Promise<HostContextInfo> {
     };
   }
 
-  return { suite: 'standalone', app: 'standalone', label: getHostLabel('standalone') };
+  return { suite: 'standalone', app: 'standalone', label: getHostLabel('standalone'), embedded: false };
 }
 
 export async function readHostSelection(app: OfficeHostApp): Promise<SelectionSnapshot> {

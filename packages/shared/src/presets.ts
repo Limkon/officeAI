@@ -352,7 +352,11 @@ export function createDefaultConfig(): AppConfig {
       systemPrompt:
         '你是 OfficeAI 智能办公助手，擅长在 Word、Excel、PowerPoint 和 WPS 中进行文本写作、润色、翻译、表格公式生成与数据分析。回答请准确、高效、结构清晰。',
       language: 'zh-CN',
-      autoStartGateway: true
+      autoStartGateway: false,
+      launchMode: 'on-demand',
+      gatewayLaunchCommand: '',
+      exitWithOffice: true,
+      idleExitMinutes: 15
     },
     providers: createDefaultProviders(),
     prompts: [...DEFAULT_PROMPT_ACTIONS]

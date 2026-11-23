@@ -4,15 +4,25 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type {
-  AppSettings,
-  ChatRequest,
-  PromptAction,
-  ProviderConfig,
-  StreamEvent
+import {
+  buildGatewayLaunchUrl,
+  type AppSettings,
+  type ChatRequest,
+  type PromptAction,
+  type ProviderConfig,
+  type StreamEvent
 } from '@officeai/shared';
 import { ensureLocalhostCert } from './certs.js';
 import { ConfigStore } from './config-store.js';
+import {
+  createLauncherShortcut,
+  registerProtocolHandler,
+  removeLauncherShortcut,
+  resolveLaunchTarget,
+  unregisterProtocolHandler,
+  type LaunchTarget
+} from './desktop-tools.js';
+import { LifecycleMonitor } from './lifecycle.js';
 import { probeLocalRuntimes, resolveProviderAdapter } from './providers/index.js';
 import { WindowsOfficeIntegrator } from './windows/office-integrator.js';
 
@@ -68,7 +78,21 @@ export interface RunningGateway {
   httpsUrl?: string;
   store: ConfigStore;
   integrator: WindowsOfficeIntegrator;
+  lifecycle: LifecycleMonitor;
+  launchTarget: LaunchTarget;
   close: () => Promise<void>;
+}
+
+interface GatewayOptions {
+  dataDir?: string;
+  httpPort?: number;
+  httpsPort?: number;
+  host?: string;
+  enableHttps?: boolean;
+  /** Who started this process (add-in / desktop / cli) */
+  launcher?: string;
+  /** Internal hook used by the CLI, Electron app and tests */
+  onExitRequested?: (reason: string) => void;
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -95,6 +119,91 @@ async function readJsonBody<T = Record<string, unknown>>(req: IncomingMessage): 
   const raw = Buffer.concat(chunks).toString('utf8').trim();
   if (!raw) return {} as T;
   return JSON.parse(raw) as T;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Minimal offline page served to WPS when the gateway is not running. It is
+ * written next to the local add-in, so it must not reference any external file.
+ */
+function renderLauncherPage(options: {
+  gatewayUrl: string;
+  launchCommand: string;
+  title?: string;
+  hint?: string;
+}): string {
+  const { gatewayUrl, launchCommand } = options;
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${escapeHtml(options.title ?? 'OfficeAI 服务未启动')}</title>
+<style>
+  body { margin:0; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#f8fafc; color:#0f172a; }
+  .wrap { max-width:520px; margin:0 auto; padding:32px 24px; }
+  h1 { font-size:17px; margin:0 0 8px; }
+  p { font-size:13px; line-height:1.7; color:#475569; margin:0 0 14px; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:18px 20px; }
+  button { width:100%; border:0; border-radius:10px; padding:11px 14px; font-size:14px; font-weight:600;
+    color:#fff; background:#2563eb; cursor:pointer; }
+  button.secondary { background:#f1f5f9; color:#334155; margin-top:10px; }
+  code { display:block; background:#0f172a; color:#e2e8f0; border-radius:8px; padding:9px 11px;
+    font-size:11px; word-break:break-all; margin:10px 0 0; }
+  .state { font-size:12px; color:#64748b; margin-top:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>OfficeAI 服务未启动</h1>
+    <p>OfficeAI 助手按需启动：点击下面的按钮会自动拉起本地网关，随后即可正常使用。</p>
+    <button id="start">一键启动 OfficeAI</button>
+    <button class="secondary" id="retry">我已启动，重新连接</button>
+    <p style="margin-top:14px">如果按钮没有反应，请手动双击开始菜单中的「OfficeAI 启动」，或在命令行执行：</p>
+    <code>${escapeHtml(launchCommand || 'Start-OfficeAI.bat')}</code>
+    <div class="state" id="state"></div>
+  </div>
+</div>
+<script>
+  var GATEWAY_URL = ${JSON.stringify(gatewayUrl)};
+  var LAUNCH_URL = ${JSON.stringify(buildGatewayLaunchUrl(gatewayUrl, 'wps'))};
+  var stateEl = document.getElementById('state');
+  function setState(text) { stateEl.textContent = text; }
+  function go() { window.location.href = GATEWAY_URL + '/?host=wps'; }
+  function poll(remaining) {
+    fetch(GATEWAY_URL + '/api/health', { cache: 'no-store' })
+      .then(function (r) { if (r.ok) { go(); } else { throw new Error('bad'); } })
+      .catch(function () {
+        if (remaining <= 0) {
+          setState('仍未检测到服务，请手动启动后再点「重新连接」。');
+          return;
+        }
+        setState('正在等待 OfficeAI 启动…（' + remaining + '）');
+        setTimeout(function () { poll(remaining - 1); }, 1000);
+      });
+  }
+  document.getElementById('start').onclick = function () {
+    setState('正在唤起 OfficeAI…');
+    window.location.href = LAUNCH_URL;
+    setTimeout(function () { poll(30); }, 1200);
+  };
+  document.getElementById('retry').onclick = function () {
+    setState('正在检查服务…');
+    poll(3);
+  };
+  poll(2);
+</script>
+</body>
+</html>`;
 }
 
 function isWithinDir(targetPath: string, baseDir: string): boolean {
@@ -167,13 +276,7 @@ function serveStaticFile(
   return true;
 }
 
-export async function startGateway(options?: {
-  dataDir?: string;
-  httpPort?: number;
-  httpsPort?: number;
-  host?: string;
-  enableHttps?: boolean;
-}): Promise<RunningGateway> {
+export async function startGateway(options?: GatewayOptions): Promise<RunningGateway> {
   const store = new ConfigStore(options?.dataDir);
   const paths = resolveGatewayPaths();
   const cfg = store.getConfig();
@@ -189,6 +292,14 @@ export async function startGateway(options?: {
     'https://127.0.0.1:18443': `https://127.0.0.1:${actualHttpsPort}`,
     'http://127.0.0.1:18080': `http://127.0.0.1:${actualHttpPort}`
   });
+
+  const mutableSettings = () => store.getConfig().settings;
+  const launchTarget: LaunchTarget = resolveLaunchTarget({
+    customCommand: mutableSettings().gatewayLaunchCommand,
+    dataDir: store.dataDir
+  });
+  let lifecycle: LifecycleMonitor | null = null;
+  let lifecycleStarter: (settings: AppSettings) => void = () => {};
 
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
     const allowedOrigin = setCorsHeaders(req, res);
@@ -206,6 +317,7 @@ export async function startGateway(options?: {
 
     const urlObj = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
     const pathname = decodeURIComponent(urlObj.pathname);
+    lifecycle?.touch();
 
     try {
       // --- API routes ---
@@ -222,6 +334,42 @@ export async function startGateway(options?: {
         return;
       }
 
+      // --- On-demand launch helpers (used by the WPS add-in & Office deep link) ---
+      if (pathname === '/api/office/status' && req.method === 'GET') {
+        sendJson(res, 200, {
+          ok: true,
+          gatewayHttpUrl: httpUrl,
+          gatewayHttpsUrl: httpsUrl ?? null,
+          running: true,
+          startPageUrl: `${httpUrl}/start`,
+          launchUrl: buildGatewayLaunchUrl(httpUrl, urlObj.searchParams.get('app') ?? undefined),
+          launchTarget: launchTarget.command
+            ? {
+                command: launchTarget.command,
+                kind: launchTarget.kind,
+                source: launchTarget.source
+              }
+            : null,
+          settings: {
+            launchMode: mutableSettings().launchMode,
+            exitWithOffice: mutableSettings().exitWithOffice,
+            idleExitMinutes: mutableSettings().idleExitMinutes
+          },
+          lifecycle: lifecycle?.getStatus() ?? null
+        });
+        return;
+      }
+
+      if (pathname === '/start' && req.method === 'GET') {
+        const html = renderLauncherPage({
+          gatewayUrl: httpUrl,
+          launchCommand: launchTarget.command
+        });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(html);
+        return;
+      }
+
       if (pathname === '/api/config' && req.method === 'GET') {
         sendJson(res, 200, store.getPublicConfig());
         return;
@@ -229,7 +377,11 @@ export async function startGateway(options?: {
 
       if (pathname === '/api/config/settings' && req.method === 'PUT') {
         const body = await readJsonBody<Partial<AppSettings>>(req);
+        const previousMode = store.getConfig().settings.launchMode;
         const updated = store.updateSettings(body);
+        if (updated.launchMode !== previousMode) {
+          lifecycleStarter(updated);
+        }
         sendJson(res, 200, { ok: true, settings: updated });
         return;
       }
@@ -558,6 +710,32 @@ export async function startGateway(options?: {
         return;
       }
 
+      if (pathname === '/api/windows/register-protocol' && req.method === 'POST') {
+        const exe = launchTarget.kind === 'exe' ? launchTarget.command : '';
+        if (!exe) {
+          sendJson(res, 200, {
+            ok: false,
+            message:
+              '未找到 OfficeAI.exe，无法注册 officeai:// 协议。请在「启动方式」中填写 OfficeAI 可执行文件路径。'
+          });
+          return;
+        }
+        const result = await registerProtocolHandler(exe);
+        if (result.ok) {
+          const shortcut = await createLauncherShortcut(buildGatewayLaunchUrl(httpUrl, 'office'));
+          result.message = `${result.message}${shortcut.ok ? ` ${shortcut.message}` : ''}`;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (pathname === '/api/windows/unregister-protocol' && req.method === 'POST') {
+        const result = await unregisterProtocolHandler();
+        await removeLauncherShortcut();
+        sendJson(res, 200, result);
+        return;
+      }
+
       if (pathname === '/api/windows/install-office' && req.method === 'POST') {
         const result = await integrator.installMsOffice();
         sendJson(res, 200, result);
@@ -591,6 +769,15 @@ export async function startGateway(options?: {
         }
         sendJson(res, 404, { error: 'Not found', path: pathname });
         return;
+      }
+
+      // Launcher page opened inside WPS right after `OAAssist.ShellExecute`:
+      // it polls /api/health and navigates to the assistant once ready.
+      const wpsBootstrap = path.resolve(paths.wpsAddinDir, 'launcher.html');
+      if ((pathname === '/wps/bootstrap.html' || pathname === '/bootstrap.html') && fs.existsSync(wpsBootstrap)) {
+        if (serveStaticFile(res, wpsBootstrap)) {
+          return;
+        }
       }
 
       if (pathname === '/wps' || pathname.startsWith('/wps/')) {
@@ -660,8 +847,45 @@ export async function startGateway(options?: {
     store.dataDir,
     actualHttpPort,
     actualHttpsPort,
-    paths.assetsRoot
+    paths.assetsRoot,
+    launchTarget.command
   );
+
+  const onExitRequested =
+    options?.onExitRequested ??
+    ((reason: string) => {
+      console.log(`[OfficeAI] ${reason}，网关将自动退出。`);
+      setTimeout(() => process.exit(0), 150);
+    });
+
+  lifecycle = new LifecycleMonitor(() => store.getConfig().settings, {
+    launcher: options?.launcher,
+    onExitRequested
+  });
+
+  function restartLifecycle(nextSettings: AppSettings): void {
+    lifecycle?.stop();
+    if (nextSettings.launchMode === 'on-demand') {
+      lifecycle?.start();
+    }
+  }
+
+  // Expose the lifecycle starter on the handler scope (used by PUT /api/config/settings)
+  lifecycleStarter = restartLifecycle;
+
+  if (store.getConfig().settings.launchMode === 'on-demand') {
+    lifecycle.start();
+  }
+
+  const close = async () => {
+    lifecycle?.stop();
+    await Promise.all([
+      new Promise<void>((resolve) => httpServer.close(() => resolve())),
+      httpsServer
+        ? new Promise<void>((resolve) => httpsServer!.close(() => resolve()))
+        : Promise.resolve()
+    ]);
+  };
 
   return {
     httpServer,
@@ -670,13 +894,8 @@ export async function startGateway(options?: {
     httpsUrl,
     store,
     integrator,
-    close: async () => {
-      await Promise.all([
-        new Promise<void>((resolve) => httpServer.close(() => resolve())),
-        httpsServer
-          ? new Promise<void>((resolve) => httpsServer!.close(() => resolve()))
-          : Promise.resolve()
-      ]);
-    }
+    lifecycle,
+    launchTarget,
+    close
   };
 }
