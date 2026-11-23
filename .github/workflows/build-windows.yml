@@ -37,19 +37,26 @@ jobs:
         shell: pwsh
         run: ./windows/waker/install-waker.ps1 -Action Install -Build
 
-      - name: Build Office watcher (background listener)
+      # 可选组件：仅在用户显式选择「后台监听器」时才需要。
+      # 默认路径（唤醒器）已在上一步验证编译；这里只做尽力而为的编译，
+      # 失败不阻塞发布，脚本会打印 csc 的原始错误供排查。
+      - name: Build Office watcher (optional, best effort)
         shell: pwsh
-        # 只编译，不注册计划任务（CI 环境无需自启）
+        continue-on-error: true
         run: ./windows/waker/install-watcher.ps1 -Action Status -Build
 
       - name: Verify waker DLL built
         shell: pwsh
         run: |
           if (-not (Test-Path ./windows/waker/build/OfficeAI.Waker.dll)) { throw 'OfficeAI.Waker.dll 未生成' }
-          if (-not (Test-Path ./windows/waker/build/OfficeAI.Watcher.exe)) { throw 'OfficeAI.Watcher.exe 未生成' }
           New-Item -ItemType Directory -Force -Path ./release/waker | Out-Null
           Copy-Item ./windows/waker/build/OfficeAI.Waker.dll ./release/waker/OfficeAI.Waker.dll -Force
-          Copy-Item ./windows/waker/build/OfficeAI.Watcher.exe ./release/waker/OfficeAI.Watcher.exe -Force
+          if (Test-Path ./windows/waker/build/OfficeAI.Watcher.exe) {
+            Copy-Item ./windows/waker/build/OfficeAI.Watcher.exe ./release/waker/OfficeAI.Watcher.exe -Force
+            Write-Host 'watcher: 已编译'
+          } else {
+            Write-Warning 'watcher: 未编译（可选组件，用户可用 install-watcher.ps1 -Build 现场编译）'
+          }
           Get-ChildItem ./release/waker | Select-Object Name, Length
 
       - name: Unregister waker/watcher (CI is a throwaway runner)
