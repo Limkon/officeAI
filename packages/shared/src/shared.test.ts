@@ -5,7 +5,10 @@ import {
   maskApiKey,
   renderPromptTemplate,
   createDefaultConfig,
-  PROVIDER_PRESETS
+  PROVIDER_PRESETS,
+  parseOfficeActions,
+  stripStreamingOfficeActionTags,
+  buildOfficeAgentSystemPrompt
 } from './index.js';
 
 test('ThinkTagSplitter splits reasoning and answer across chunk boundaries', () => {
@@ -42,4 +45,32 @@ test('createDefaultConfig includes all cloud and local presets', () => {
   assert.ok(cfg.providers.some((p) => p.id === 'ollama' && p.category === 'local'));
   assert.ok(cfg.providers.some((p) => p.id === 'anthropic' && p.protocol === 'anthropic'));
   assert.ok(cfg.providers.some((p) => p.id === 'gemini' && p.protocol === 'gemini'));
+});
+
+test('parseOfficeActions extracts structured Word/Excel commands and strips tags', () => {
+  const raw = [
+    '已为你准备好汇总公式和表头格式：',
+    '<office_action>',
+    '{"action":"set_cells","summary":"在 E2 写入求和公式","range":"E2","formula":"=SUM(B2:D2)"}',
+    '</office_action>',
+    '<office_action>```json\n{"action":"format_range","summary":"表头加粗","range":"A1:E1","bold":true}\n```</office_action>'
+  ].join('\n');
+
+  const parsed = parseOfficeActions(raw);
+  assert.equal(parsed.displayText, '已为你准备好汇总公式和表头格式：');
+  assert.equal(parsed.actions.length, 2);
+  assert.equal(parsed.actions[0].action, 'set_cells');
+  assert.equal(parsed.actions[0].formula, '=SUM(B2:D2)');
+  assert.equal(parsed.actions[1].action, 'format_range');
+  assert.equal(parsed.actions[1].bold, true);
+
+  const sys = buildOfficeAgentSystemPrompt('Base prompt', 'excel');
+  assert.ok(sys.includes('set_cells'));
+  assert.ok(sys.includes('<office_action>'));
+});
+
+test('stripStreamingOfficeActionTags suppresses partial opening tags during stream', () => {
+  assert.equal(stripStreamingOfficeActionTags('正在处理\n<office_ac'), '正在处理');
+  assert.equal(stripStreamingOfficeActionTags('完成\n<office_action>{"action":"set_cells"'), '完成');
+  assert.equal(stripStreamingOfficeActionTags('<office_action>{"action":'), '');
 });

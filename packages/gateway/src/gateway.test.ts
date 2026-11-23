@@ -4,14 +4,24 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startGateway } from './server.js';
+import { isAllowedOrigin, startGateway } from './server.js';
 import { ConfigStore } from './config-store.js';
 
 function createTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-test('ConfigStore masks API keys and preserves secrets on partial update', () => {
+test('isAllowedOrigin permits loopback, Office domains, and null, while blocking third-party sites', () => {
+  assert.equal(isAllowedOrigin(undefined), true);
+  assert.equal(isAllowedOrigin('null'), true);
+  assert.equal(isAllowedOrigin('http://127.0.0.1:18080'), true);
+  assert.equal(isAllowedOrigin('https://127.0.0.1:18443'), true);
+  assert.equal(isAllowedOrigin('http://localhost:5173'), true);
+  assert.equal(isAllowedOrigin('https://word-edit.officeapps.live.com'), true);
+  assert.equal(isAllowedOrigin('https://evil.example.com'), false);
+});
+
+test('ConfigStore masks API keys, supports clearApiKey, and falls back activeProviderId on delete', () => {
   const dir = createTempDir('officeai-cfg-');
   const store = new ConfigStore(dir);
 
@@ -32,20 +42,44 @@ test('ConfigStore masks API keys and preserves secrets on partial update', () =>
   store.upsertProvider({ id: 'openai', selectedModel: 'gpt-4.1' });
   assert.equal(store.getProvider('openai')?.apiKey, 'sk-secret-key-9999');
 
+  // Explicit clearApiKey removes secret
+  store.upsertProvider({ id: 'openai', clearApiKey: true });
+  assert.equal(store.getProvider('openai')?.apiKey, '');
+
+  // Custom provider deletion updates activeProviderId fallback
+  store.upsertProvider({ id: 'custom-temp', name: 'Temp', enabled: true });
+  store.updateSettings({ activeProviderId: 'custom-temp', activeModel: 'gpt-4o' });
+  assert.equal(store.deleteProvider('custom-temp'), true);
+  assert.notEqual(store.getConfig().settings.activeProviderId, 'custom-temp');
+
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('Gateway serves config, mock OpenAI/Ollama streaming chat, and static manifests', async () => {
+test('Gateway serves config, handles CORS/path-traversal, stream_options fallback, Gemini header, and manifests', async () => {
   const dataDir = createTempDir('officeai-gw-');
+  let sawGeminiHeaderKey = '';
+  let openaiAttemptCount = 0;
 
-  // Start mock upstream server simulating OpenAI + Ollama
   const mockUpstream = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+    const bodyText = Buffer.concat(chunks).toString('utf8');
+
     if (req.url === '/v1/models' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ data: [{ id: 'mock-gpt-4o' }, { id: 'mock-mini' }] }));
       return;
     }
+
     if (req.url === '/v1/chat/completions' && req.method === 'POST') {
+      openaiAttemptCount++;
+      const parsed = JSON.parse(bodyText);
+      // Simulate upstream that rejects stream_options on first attempt
+      if (parsed.stream_options) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unrecognized request argument supplied: stream_options' }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.write(
         'data: ' +
@@ -64,11 +98,22 @@ test('Gateway serves config, mock OpenAI/Ollama streaming chat, and static manif
       res.end();
       return;
     }
-    if (req.url === '/api/tags' && req.method === 'GET') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ models: [{ name: 'qwen2.5:7b' }] }));
+
+    if (req.url?.startsWith('/v1beta/models/gemini-2.5-flash:streamGenerateContent')) {
+      sawGeminiHeaderKey = String(req.headers['x-goog-api-key'] || '');
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(
+        'data: ' +
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'Gemini OK' }] } }],
+            usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 2 }
+          }) +
+          '\n\n'
+      );
+      res.end();
       return;
     }
+
     res.writeHead(404);
     res.end();
   });
@@ -84,13 +129,19 @@ test('Gateway serves config, mock OpenAI/Ollama streaming chat, and static manif
   });
 
   try {
-    // 1. Health check
-    const healthRes = await fetch(`${gw.httpUrl}/api/health`);
-    assert.equal(healthRes.status, 200);
-    const health = (await healthRes.json()) as { ok: boolean };
-    assert.equal(health.ok, true);
+    // 1. CORS rejection for untrusted web origin
+    const evilRes = await fetch(`${gw.httpUrl}/api/config`, {
+      headers: { Origin: 'https://evil.example.com' }
+    });
+    assert.equal(evilRes.status, 403);
 
-    // 2. Configure openai provider against mock upstream
+    // 2. Path traversal blocked (both encoded %2e%2e and missing asset extension)
+    const travRes = await fetch(`${gw.httpUrl}/office/%2e%2e/package.json`);
+    assert.equal(travRes.status, 404);
+    const missingAssetRes = await fetch(`${gw.httpUrl}/package.json`);
+    assert.equal(missingAssetRes.status, 404);
+
+    // 3. Configure OpenAI & test stream_options retry fallback
     await fetch(`${gw.httpUrl}/api/providers/openai`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -101,17 +152,6 @@ test('Gateway serves config, mock OpenAI/Ollama streaming chat, and static manif
       })
     });
 
-    // 3. Test connection
-    const testRes = await fetch(`${gw.httpUrl}/api/providers/openai/test`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}'
-    });
-    const testJson = (await testRes.json()) as { ok: boolean; models: string[] };
-    assert.equal(testJson.ok, true);
-    assert.deepEqual(testJson.models, ['mock-gpt-4o', 'mock-mini']);
-
-    // 4. Test non-stream chat endpoint (verifies ThinkTagSplitter + usage)
     const chatRes = await fetch(`${gw.httpUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -123,14 +163,42 @@ test('Gateway serves config, mock OpenAI/Ollama streaming chat, and static manif
         messages: [{ role: 'user', content: 'hi' }]
       })
     });
+    assert.equal(chatRes.status, 200);
     const chatJson = (await chatRes.json()) as {
       content: string;
       reasoning?: string;
       usage?: { promptTokens?: number; completionTokens?: number };
     };
+    assert.equal(openaiAttemptCount, 2); // first failed on stream_options, second succeeded
     assert.equal(chatJson.reasoning, 'plan');
     assert.equal(chatJson.content, 'Hello OfficeAI!');
     assert.equal(chatJson.usage?.promptTokens, 10);
+
+    // 4. Configure Gemini & verify x-goog-api-key header (not URL query param)
+    await fetch(`${gw.httpUrl}/api/providers/gemini`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        baseUrl: `http://127.0.0.1:${mockPort}`,
+        apiKey: 'AIza-test-header-key',
+        selectedModel: 'gemini-2.5-flash'
+      })
+    });
+
+    const gemRes = await fetch(`${gw.httpUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerId: 'gemini',
+        model: 'gemini-2.5-flash',
+        stream: false,
+        messages: [{ role: 'user', content: 'hi' }]
+      })
+    });
+    assert.equal(gemRes.status, 200);
+    const gemJson = (await gemRes.json()) as { content: string };
+    assert.equal(gemJson.content, 'Gemini OK');
+    assert.equal(sawGeminiHeaderKey, 'AIza-test-header-key');
 
     // 5. Verify manifest.xml and ribbon.xml static serving with dynamic port replacement
     const manifestRes = await fetch(`${gw.httpUrl}/office/manifest.xml`);

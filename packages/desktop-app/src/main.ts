@@ -127,14 +127,23 @@ if (!singleLock) {
   });
 
   app.whenReady().then(async () => {
-    const assetsDir = resolveAssetsDir();
-    if (fs.existsSync(path.join(assetsDir, 'addin-ui'))) {
-      process.env.OFFICEAI_ASSETS_DIR = assetsDir;
-    }
+    try {
+      const assetsDir = resolveAssetsDir();
+      if (fs.existsSync(path.join(assetsDir, 'addin-ui'))) {
+        process.env.OFFICEAI_ASSETS_DIR = assetsDir;
+      }
 
-    gateway = await startGateway();
-    createTray();
-    await createMainWindow('/dashboard');
+      gateway = await startGateway();
+      createTray();
+      await createMainWindow('/dashboard');
+    } catch (err) {
+      dialog.showErrorBox(
+        'OfficeAI 启动失败',
+        `本地网关启动失败，请检查端口 18080 / 18443 是否被占用：\n${err instanceof Error ? err.message : String(err)}`
+      );
+      isQuitting = true;
+      app.quit();
+    }
   });
 
   app.on('before-quit', async () => {

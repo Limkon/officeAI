@@ -24,27 +24,56 @@ export const openaiAdapter: ProviderAdapter = {
   }: ProviderStreamParams) {
     const base = normalizeBaseUrl(provider.baseUrl);
     const url = `${base}/chat/completions`;
-    const isReasoningModel = /^o[134]/i.test(model) || model.includes('reasoner');
+    const isOpenAIReasoning = /^o[134](?:-|$)/i.test(model);
+    const isAnyReasoning = isOpenAIReasoning || model.includes('reasoner');
 
-    const payload: Record<string, unknown> = {
-      model,
-      messages,
-      stream: true,
-      stream_options: { include_usage: true }
+    const buildPayload = (includeStreamOptions: boolean) => {
+      const payload: Record<string, unknown> = {
+        model,
+        messages,
+        stream: true
+      };
+      if (includeStreamOptions) {
+        payload.stream_options = { include_usage: true };
+      }
+      if (!isAnyReasoning) {
+        payload.temperature = temperature;
+      }
+      if (maxTokens > 0) {
+        if (isOpenAIReasoning) {
+          payload.max_completion_tokens = maxTokens;
+        } else {
+          payload.max_tokens = maxTokens;
+        }
+      }
+      return payload;
     };
-    if (!isReasoningModel) {
-      payload.temperature = temperature;
-    }
-    if (maxTokens > 0) {
-      payload.max_tokens = maxTokens;
-    }
 
-    const res = await fetch(url, {
+    const headers = buildHeaders(provider);
+    const supportsStreamOptions =
+      provider.category === 'cloud' && provider.presetId !== 'custom-cloud';
+
+    let res = await fetch(url, {
       method: 'POST',
-      headers: buildHeaders(provider),
-      body: JSON.stringify(payload),
+      headers,
+      body: JSON.stringify(buildPayload(supportsStreamOptions)),
       signal
     });
+
+    // Some OpenAI-compatible servers reject stream_options with HTTP 400; retry cleanly without it
+    if (res.status === 400 && supportsStreamOptions) {
+      const errPreview = await res.text().catch(() => '');
+      if (/stream_options|unknown|unrecognized|extra/i.test(errPreview)) {
+        res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(buildPayload(false)),
+          signal
+        });
+      } else {
+        throw new Error(`HTTP 400: ${errPreview || res.statusText}`);
+      }
+    }
 
     if (!res.ok || !res.body) {
       const errText = await res.text().catch(() => '');
@@ -128,8 +157,6 @@ export const openaiAdapter: ProviderAdapter = {
         message: `连接成功，发现 ${models.length} 个模型 (${latencyMs} ms)`
       };
     } catch (err) {
-      // Some OpenAI-compatible endpoints (e.g. Doubao Ark) don't expose GET /models,
-      // so fallback to a minimal chat ping if fetchModels returns 404/405.
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('404') || msg.includes('405')) {
         try {
@@ -140,11 +167,13 @@ export const openaiAdapter: ProviderAdapter = {
             body: JSON.stringify({
               model: provider.selectedModel || provider.models[0],
               messages: [{ role: 'user', content: 'hi' }],
-              max_tokens: 4
+              max_tokens: 4,
+              stream: false
             }),
             signal: AbortSignal.timeout(10000)
           });
           const latencyMs = Date.now() - start;
+          const bodyTxt = await pingRes.text().catch(() => '');
           if (pingRes.ok) {
             return {
               ok: true,
@@ -153,12 +182,11 @@ export const openaiAdapter: ProviderAdapter = {
               message: `对话接口连接成功 (${latencyMs} ms)`
             };
           }
-          const txt = await pingRes.text().catch(() => '');
           return {
             ok: false,
             latencyMs,
             models: [],
-            message: `连接失败: HTTP ${pingRes.status} ${txt}`
+            message: `连接失败: HTTP ${pingRes.status} ${bodyTxt}`
           };
         } catch (pingErr) {
           return {

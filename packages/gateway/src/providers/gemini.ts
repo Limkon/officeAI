@@ -13,8 +13,7 @@ export const geminiAdapter: ProviderAdapter = {
   }: ProviderStreamParams) {
     const base = normalizeBaseUrl(provider.baseUrl);
     const cleanModel = model.replace(/^models\//, '');
-    const apiKey = encodeURIComponent(provider.apiKey.trim());
-    const url = `${base}/v1beta/models/${cleanModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
+    const url = `${base}/v1beta/models/${cleanModel}:streamGenerateContent?alt=sse`;
 
     const systemText = messages
       .filter((m) => m.role === 'system')
@@ -23,11 +22,15 @@ export const geminiAdapter: ProviderAdapter = {
       .trim();
 
     const contents = messages
-      .filter((m) => m.role !== 'system')
+      .filter((m) => m.role !== 'system' && m.content.trim().length > 0)
       .map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }]
       }));
+
+    if (contents.length === 0) {
+      throw new Error('消息列表不能为空');
+    }
 
     const payload: Record<string, unknown> = {
       contents,
@@ -46,6 +49,7 @@ export const geminiAdapter: ProviderAdapter = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-goog-api-key': provider.apiKey.trim(),
         ...(provider.extraHeaders ?? {})
       },
       body: JSON.stringify(payload),
@@ -70,6 +74,11 @@ export const geminiAdapter: ProviderAdapter = {
         parsed = JSON.parse(data);
       } catch {
         continue;
+      }
+
+      if (parsed.error && typeof parsed.error === 'object') {
+        const errMsg = (parsed.error as { message?: string }).message;
+        throw new Error(errMsg || 'Gemini stream error');
       }
 
       const usageMeta = parsed.usageMetadata as
@@ -102,9 +111,12 @@ export const geminiAdapter: ProviderAdapter = {
 
   async fetchModels(provider: ProviderConfig): Promise<string[]> {
     const base = normalizeBaseUrl(provider.baseUrl);
-    const apiKey = encodeURIComponent(provider.apiKey.trim());
-    const res = await fetch(`${base}/v1beta/models?key=${apiKey}`, {
+    const res = await fetch(`${base}/v1beta/models`, {
       method: 'GET',
+      headers: {
+        'x-goog-api-key': provider.apiKey.trim(),
+        ...(provider.extraHeaders ?? {})
+      },
       signal: AbortSignal.timeout(8000)
     });
     if (!res.ok) {

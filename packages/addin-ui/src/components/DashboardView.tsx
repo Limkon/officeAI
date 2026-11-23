@@ -61,6 +61,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // Add custom provider modal/inline state
+  const [addingProvider, setAddingProvider] = useState(false);
+  const [newProvName, setNewProvName] = useState('');
+  const [newProvCategory, setNewProvCategory] = useState<'cloud' | 'local'>('cloud');
+  const [newProvProtocol, setNewProvProtocol] = useState<'openai' | 'anthropic' | 'gemini' | 'ollama'>('openai');
+  const [newProvBaseUrl, setNewProvBaseUrl] = useState('https://api.example.com/v1');
+  const [newProvModel, setNewProvModel] = useState('gpt-4o');
+
+  // Global generation params
+  const [globalTemp, setGlobalTemp] = useState(config.settings.temperature);
+  const [globalMaxTokens, setGlobalMaxTokens] = useState(config.settings.maxTokens);
+  const [globalSystemPrompt, setGlobalSystemPrompt] = useState(config.settings.systemPrompt);
+  const [savingGlobal, setSavingGlobal] = useState(false);
+  const [globalMsg, setGlobalMsg] = useState<string | null>(null);
+
   // Windows integration state
   const [winStatus, setWinStatus] = useState<WindowsOfficeStatus | null>(null);
   const [winActionMsg, setWinActionMsg] = useState<string | null>(null);
@@ -187,6 +202,67 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       setWinActionMsg(err instanceof Error ? err.message : String(err));
     } finally {
       setWinBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    setGlobalTemp(config.settings.temperature);
+    setGlobalMaxTokens(config.settings.maxTokens);
+    setGlobalSystemPrompt(config.settings.systemPrompt);
+  }, [config.settings]);
+
+  const handleClearApiKey = async () => {
+    if (!selectedProvider) return;
+    setSaving(true);
+    try {
+      await apiClient.saveProvider(selectedProvider.id, { clearApiKey: true });
+      setFormApiKey('');
+      await onRefreshConfig();
+      setTestMsg({ ok: true, text: '已清除保存的 API Key' });
+    } catch (err) {
+      setTestMsg({ ok: false, text: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreateCustomProvider = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProvName.trim() || !newProvBaseUrl.trim()) return;
+    const id = `custom-${Date.now()}`;
+    await apiClient.createProvider({
+      id,
+      presetId: newProvCategory === 'local' ? 'vllm' : 'custom-cloud',
+      name: newProvName.trim(),
+      category: newProvCategory,
+      protocol: newProvProtocol,
+      baseUrl: newProvBaseUrl.trim(),
+      models: [newProvModel.trim() || 'default'],
+      selectedModel: newProvModel.trim() || 'default',
+      enabled: true
+    });
+    setAddingProvider(false);
+    setNewProvName('');
+    setSelectedId(id);
+    await onRefreshConfig();
+  };
+
+  const handleSaveGlobalSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingGlobal(true);
+    setGlobalMsg(null);
+    try {
+      await apiClient.updateSettings({
+        temperature: Number(globalTemp),
+        maxTokens: Number(globalMaxTokens),
+        systemPrompt: globalSystemPrompt.trim()
+      });
+      await onRefreshConfig();
+      setGlobalMsg('全局参数已保存');
+    } catch (err) {
+      setGlobalMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingGlobal(false);
     }
   };
 
@@ -328,11 +404,87 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             {/* Provider List + Editor */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-              <aside className="lg:col-span-4 space-y-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-2xs space-y-1 max-h-[600px] overflow-y-auto">
-                  <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    模型提供方列表
+              <aside className="lg:col-span-4 space-y-3">
+                <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-2xs space-y-1 max-h-[540px] overflow-y-auto">
+                  <div className="flex items-center justify-between px-2 py-1">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      模型提供方列表
+                    </span>
+                    <button
+                      onClick={() => setAddingProvider((v) => !v)}
+                      className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700 hover:bg-blue-100"
+                    >
+                      <Plus className="h-3 w-3" />
+                      <span>新增接入</span>
+                    </button>
                   </div>
+
+                  {addingProvider && (
+                    <form
+                      onSubmit={(e) => void handleCreateCustomProvider(e)}
+                      className="mb-2 rounded-xl border border-blue-200 bg-blue-50/40 p-3 space-y-2 text-xs"
+                    >
+                      <input
+                        required
+                        value={newProvName}
+                        onChange={(e) => setNewProvName(e.target.value)}
+                        placeholder="名称（如：公司内网 vLLM）"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 outline-none"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={newProvCategory}
+                          onChange={(e) => setNewProvCategory(e.target.value as 'cloud' | 'local')}
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1.5"
+                        >
+                          <option value="cloud">云端 API</option>
+                          <option value="local">本地/内网</option>
+                        </select>
+                        <select
+                          value={newProvProtocol}
+                          onChange={(e) =>
+                            setNewProvProtocol(
+                              e.target.value as 'openai' | 'anthropic' | 'gemini' | 'ollama'
+                            )
+                          }
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1.5"
+                        >
+                          <option value="openai">OpenAI 兼容</option>
+                          <option value="ollama">Ollama</option>
+                          <option value="anthropic">Claude</option>
+                          <option value="gemini">Gemini</option>
+                        </select>
+                      </div>
+                      <input
+                        required
+                        value={newProvBaseUrl}
+                        onChange={(e) => setNewProvBaseUrl(e.target.value)}
+                        placeholder="Base URL (http/https)"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 outline-none"
+                      />
+                      <input
+                        value={newProvModel}
+                        onChange={(e) => setNewProvModel(e.target.value)}
+                        placeholder="默认模型 ID"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 outline-none"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="submit"
+                          className="flex-1 rounded-lg bg-blue-600 py-1.5 font-medium text-white hover:bg-blue-700"
+                        >
+                          添加
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAddingProvider(false)}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-600"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </form>
+                  )}
                   {config.providers.map((p) => {
                     const isActive = p.id === config.settings.activeProviderId;
                     const isSelected = p.id === selectedProvider?.id;
@@ -527,10 +679,94 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     >
                       <span>保存并设为默认模型</span>
                     </button>
+
+                    {selectedProvider.category === 'cloud' && selectedProvider.hasApiKey && (
+                      <button
+                        onClick={() => void handleClearApiKey()}
+                        disabled={saving}
+                        className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
+                      >
+                        清除 Key
+                      </button>
+                    )}
+
+                    {selectedProvider.id.startsWith('custom-') && (
+                      <button
+                        onClick={async () => {
+                          await apiClient.deleteProvider(selectedProvider.id);
+                          await onRefreshConfig();
+                          setSelectedId('ollama');
+                        }}
+                        className="rounded-xl border border-rose-200 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50"
+                      >
+                        删除此配置
+                      </button>
+                    )}
                   </div>
                 </section>
               )}
             </div>
+
+            {/* Global Parameters */}
+            <form
+              onSubmit={(e) => void handleSaveGlobalSettings(e)}
+              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900">全局推理参数与默认系统提示词</h3>
+                {globalMsg && <span className="text-xs text-emerald-600 font-medium">{globalMsg}</span>}
+              </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Temperature (0 ~ 2)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    value={globalTemp}
+                    onChange={(e) => setGlobalTemp(Number(e.target.value))}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Max Tokens (0 = 不限)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={128000}
+                    step={256}
+                    value={globalMaxTokens}
+                    onChange={(e) => setGlobalMaxTokens(Number(e.target.value))}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    全局 System Prompt
+                  </label>
+                  <input
+                    type="text"
+                    value={globalSystemPrompt}
+                    onChange={(e) => setGlobalSystemPrompt(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={savingGlobal}
+                  className="rounded-xl border border-slate-200 bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {savingGlobal ? '保存中...' : '保存全局参数'}
+                </button>
+              </div>
+            </form>
           </div>
         )}
 

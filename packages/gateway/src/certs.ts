@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import selfsigned from 'selfsigned';
@@ -9,6 +10,19 @@ export interface CertPair {
   certPath: string;
 }
 
+function isCertValid(certPem: string): boolean {
+  try {
+    const x509 = new crypto.X509Certificate(certPem);
+    const expiresAt = Date.parse(x509.validTo);
+    if (Number.isNaN(expiresAt)) return false;
+    // Renew if expiring within 30 days
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    return expiresAt - Date.now() > thirtyDaysMs;
+  } catch {
+    return false;
+  }
+}
+
 export function ensureLocalhostCert(dataDir: string): CertPair {
   const certDir = path.join(dataDir, 'certs');
   fs.mkdirSync(certDir, { recursive: true });
@@ -16,18 +30,17 @@ export function ensureLocalhostCert(dataDir: string): CertPair {
   const certPath = path.join(certDir, 'localhost.crt');
 
   if (fs.existsSync(keyPath) && fs.existsSync(certPath)) {
-    return {
-      key: fs.readFileSync(keyPath, 'utf8'),
-      cert: fs.readFileSync(certPath, 'utf8'),
-      keyPath,
-      certPath
-    };
+    const key = fs.readFileSync(keyPath, 'utf8');
+    const cert = fs.readFileSync(certPath, 'utf8');
+    if (key.trim() && isCertValid(cert)) {
+      return { key, cert, keyPath, certPath };
+    }
   }
 
   const attrs = [{ name: 'commonName', value: 'OfficeAI Local Gateway' }];
   const pems = selfsigned.generate(attrs, {
     keySize: 2048,
-    days: 3650,
+    days: 820,
     algorithm: 'sha256',
     extensions: [
       {

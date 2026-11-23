@@ -55,7 +55,7 @@ export const apiClient = {
 
   saveProvider(
     id: string,
-    patch: Partial<ProviderConfig>
+    patch: Partial<ProviderConfig> & { clearApiKey?: boolean }
   ): Promise<{ ok: boolean; config: PublicConfigResponse }> {
     return requestJson(`/api/providers/${encodeURIComponent(id)}`, {
       method: 'PUT',

@@ -111,11 +111,12 @@ export const ollamaAdapter: ProviderAdapter = {
             : 'Ollama 服务已连接，但尚未拉取模型（可运行 ollama pull qwen2.5:7b）'
       };
     } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
       return {
         ok: false,
         latencyMs: Date.now() - start,
         models: [],
-        message: `无法连接 Ollama (${provider.baseUrl})：请确认 Ollama 已启动`
+        message: `无法连接 Ollama (${provider.baseUrl})：请确认 Ollama 已启动 (${detail})`
       };
     }
   }

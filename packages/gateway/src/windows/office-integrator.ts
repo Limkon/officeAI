@@ -7,7 +7,7 @@ import type { WindowsOfficeStatus } from '@officeai/shared';
 
 const execFileAsync = promisify(execFile);
 
-const OFFICE_ADDIN_ID = 'b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a001';
+const OFFICE_ADDIN_ID = 'b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a00';
 const OFFICE_DEV_REG_KEY = 'HKCU\\Software\\Microsoft\\Office\\16.0\\WEF\\Developer';
 
 export interface IntegrationActionResult {
@@ -261,10 +261,11 @@ export class WindowsOfficeIntegrator {
     }
 
     // Remove previous officeai entries and keep other user plugins intact
-    const stripped = existingXml
+    let normalized = existingXml.replace(/<jsplugins\s*\/>/i, '<jsplugins></jsplugins>');
+    normalized = normalized
       .replace(/<jsplugin\b[^>]*name="officeai"[^>]*\/>\s*/g, '')
       .replace(/<\/jsplugins>/i, `  ${entries.join('\n  ')}\n</jsplugins>`);
-    return stripped;
+    return normalized;
   }
 
   private removeWpsPluginXml(existingXml: string): string {
