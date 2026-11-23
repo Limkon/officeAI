@@ -8,6 +8,9 @@ build/
 out/
 release/
 *.tsbuildinfo
+# 例外：NSIS 安装器定制脚本（需随仓库提交）
+!packages/desktop-app/build/
+!packages/desktop-app/build/installer.nsh
 
 # Logs & runtime
 logs/

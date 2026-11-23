@@ -2,7 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from 'electron';
 import { parseGatewayLaunchUrl } from '@officeai/shared';
-import { startGateway, type RunningGateway } from '@officeai/gateway';
+import {
+  ConfigStore,
+  WindowsOfficeIntegrator,
+  ensureLocalhostCert,
+  resolveGatewayPaths,
+  resolveLaunchTarget,
+  startGateway,
+  type RunningGateway
+} from '@officeai/gateway';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -20,6 +28,38 @@ function resolveLaunchArguments(argv: string[]): { deepLink?: string; appHint?: 
 }
 
 const launchArgs = resolveLaunchArguments(process.argv.slice(1));
+
+/** 安装程序（NSIS）在安装完成后以 `OfficeAI.exe --integrate` 无头调用，自动完成全部集成 */
+const integrateRequested = process.argv.slice(1).includes('--integrate');
+
+/**
+ * 无头全量集成：证书信任 + Microsoft Office + WPS + 唤醒器。
+ * 由安装程序在安装完成后调用，用户无需手动点按钮、手动装证书。
+ * 不弹窗口、不启动网关服务、不占用单例；全部步骤幂等，可重复执行。
+ */
+async function runHeadlessIntegration(): Promise<void> {
+  const assetsDir = resolveAssetsDir();
+  if (fs.existsSync(path.join(assetsDir, 'addin-ui'))) {
+    process.env.OFFICEAI_ASSETS_DIR = assetsDir;
+  }
+  const store = new ConfigStore();
+  const launchTarget = resolveLaunchTarget({
+    customCommand: store.getConfig().settings.gatewayLaunchCommand,
+    dataDir: store.dataDir
+  });
+  ensureLocalhostCert(store.dataDir);
+  const paths = resolveGatewayPaths();
+  const integrator = new WindowsOfficeIntegrator(
+    store.dataDir,
+    store.getConfig().settings.httpPort,
+    store.getConfig().settings.httpsPort,
+    paths.assetsRoot,
+    launchTarget.command
+  );
+  const res = await integrator.installAll();
+  console.log(`[OfficeAI:integrate] ok=${res.ok} ${res.message}`);
+  res.details?.forEach((d: string) => console.log(`  - ${d}`));
+}
 
 function resolveAssetsDir(): string {
   // Packaged Electron puts extraResources under process.resourcesPath/assets
@@ -161,7 +201,16 @@ function createTray(): void {
 }
 
 const singleLock = app.requestSingleInstanceLock();
-if (!singleLock) {
+if (integrateRequested) {
+  // 安装程序调用：无头执行全量集成后退出（不弹窗口、不启动网关服务）。
+  // 即使已有实例在运行也照常执行（全部幂等），不占用单例。
+  runHeadlessIntegration()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('[OfficeAI:integrate] 集成失败:', err);
+      process.exit(1);
+    });
+} else if (!singleLock) {
   // A gateway is already running: let the existing instance handle the deep
   // link (e.g. WPS asked to start the assistant while it is already up).
   app.quit();
@@ -203,6 +252,18 @@ if (!singleLock) {
       // deep link target so we never land on a dead page.
       if (target && target !== gateway.httpUrl) {
         console.log(`[OfficeAI] 端口不同，期望 ${target}，实际 ${gateway.httpUrl}`);
+      }
+
+      // 兜底：若唤醒器未安装或证书未信任（例如安装程序的集成步骤被跳过/失败，
+      // 或从旧版本升级），首次启动时自动补做全量集成。全部幂等，失败不影响启动。
+      try {
+        const status = await gateway.integrator.getStatus();
+        if (!status.waker?.installed || !status.certTrusted) {
+          const res = await gateway.integrator.installAll();
+          console.log(`[OfficeAI] 启动时自动集成：ok=${res.ok} ${res.message}`);
+        }
+      } catch (err) {
+        console.warn('[OfficeAI] 启动时自动集成跳过:', err);
       }
 
       createTray();

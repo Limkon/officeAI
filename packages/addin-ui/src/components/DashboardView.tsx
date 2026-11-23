@@ -79,6 +79,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Windows integration state
   const [winStatus, setWinStatus] = useState<WindowsOfficeStatus | null>(null);
   const [winActionMsg, setWinActionMsg] = useState<string | null>(null);
+  const [winActionDetails, setWinActionDetails] = useState<string[] | null>(null);
   const [winBusy, setWinBusy] = useState(false);
 
   // On-demand launch settings
@@ -206,12 +207,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
-  const handleWinAction = async (fn: () => Promise<{ ok: boolean; message: string }>) => {
+  const handleWinAction = async (
+    fn: () => Promise<{ ok: boolean; message: string; details?: string[] }>
+  ) => {
     setWinBusy(true);
     setWinActionMsg(null);
+    setWinActionDetails(null);
     try {
       const res = await fn();
       setWinActionMsg(res.message);
+      setWinActionDetails(res.details ?? null);
       await loadWinStatus();
     } catch (err) {
       setWinActionMsg(err instanceof Error ? err.message : String(err));
@@ -825,7 +830,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="space-y-6">
             {winActionMsg && (
               <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                {winActionMsg}
+                <div>{winActionMsg}</div>
+                {winActionDetails && winActionDetails.length > 0 && (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-blue-800">
+                    {winActionDetails.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
 
