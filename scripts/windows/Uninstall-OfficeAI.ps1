@@ -28,6 +28,19 @@ foreach ($AddinId in @("b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a00", "b8d4c3e2-71a0-4f
 }
 Write-Host "已清理 Microsoft Office 注册项。"
 
+# 卸载后台监听器（计划任务 + 常驻进程）
+$WatcherScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "waker\install-watcher.ps1"
+if (Test-Path $WatcherScript) {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $WatcherScript -Action Uninstall
+} else {
+  $task = Get-ScheduledTask -TaskName 'OfficeAI Watcher' -ErrorAction SilentlyContinue
+  if ($task) {
+    Stop-ScheduledTask -TaskName 'OfficeAI Watcher' -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'OfficeAI Watcher' -Confirm:$false
+    Write-Host "已移除计划任务: OfficeAI Watcher"
+  }
+}
+
 # 卸载 Office 唤醒器（COM 加载项）
 $WakerScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "waker\install-waker.ps1"
 if (Test-Path $WakerScript) {

@@ -53,6 +53,86 @@ export class WindowsOfficeIntegrator {
     ];
   }
 
+  /** 后台监听器状态：计划任务是否注册、进程是否在跑、内存占用 */
+  private async getWatcherStatus(): Promise<{
+    installed: boolean;
+    running: boolean;
+    state?: string;
+    pid?: number | null;
+    memoryMB?: number | null;
+  }> {
+    if (!this.isWindows) return { installed: false, running: false };
+    try {
+      const { stdout } = await this.runPowerShell(
+        `$task = Get-ScheduledTask -TaskName 'OfficeAI Watcher' -ErrorAction SilentlyContinue; ` +
+          `$proc = Get-Process -Name 'OfficeAI.Watcher' -ErrorAction SilentlyContinue; ` +
+          `[ordered]@{ registered = [bool]$task; state = if ($task) { [string]$task.State } else { 'Absent' }; ` +
+          `running = [bool]$proc; pid = if ($proc) { $proc.Id } else { $null }; ` +
+          `memoryMB = if ($proc) { [math]::Round($proc.WorkingSet64 / 1MB, 1) } else { $null } } | ConvertTo-Json -Compress`
+      );
+      const parsed = JSON.parse(stdout.trim() || '{}') as {
+        registered?: boolean;
+        running?: boolean;
+        state?: string;
+        pid?: number | null;
+        memoryMB?: number | null;
+      };
+      return {
+        installed: Boolean(parsed.registered),
+        running: Boolean(parsed.running),
+        state: parsed.state,
+        pid: parsed.pid ?? null,
+        memoryMB: parsed.memoryMB ?? null
+      };
+    } catch {
+      return { installed: false, running: false };
+    }
+  }
+
+  private get watcherScript(): string {
+    return path.join(this.assetsRoot, 'waker', 'install-watcher.ps1');
+  }
+
+  /** 安装后台监听器（登录自启的计划任务 + 轻量常驻进程） */
+  async installOfficeWatcher(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) return { ok: false, message: '后台监听器仅支持 Windows。' };
+    if (!fs.existsSync(this.watcherScript)) {
+      return {
+        ok: false,
+        message: `未找到安装脚本：${this.watcherScript}。可手动执行 windows/waker/install-watcher.ps1 -Action Install -Build`
+      };
+    }
+    try {
+      const { stdout, stderr } = await this.runPowerShell(
+        `& '${this.watcherScript.replace(/'/g, "''")}' -Action Install -Build`
+      );
+      return {
+        ok: true,
+        message:
+          '后台监听器安装成功！它会常驻（约 10MB），在 Word/Excel/PPT/WPS 启动时自动拉起网关；Office 启动路径零开销。',
+        details: [stdout.trim(), stderr.trim()].filter(Boolean)
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `后台监听器安装失败：${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  async uninstallOfficeWatcher(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) return { ok: false, message: '后台监听器仅支持 Windows。' };
+    try {
+      await this.runPowerShell(`& '${this.watcherScript.replace(/'/g, "''")}' -Action Uninstall`);
+      return { ok: true, message: '已卸载后台监听器（登录自启已移除）。' };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `卸载后台监听器失败：${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
   private async getWakerStatus(): Promise<{ installed: boolean; loadBehavior: Record<string, number | null> }> {
     const loadBehavior: Record<string, number | null> = { Word: null, Excel: null, PowerPoint: null };
     if (!this.isWindows) return { installed: false, loadBehavior };
@@ -217,6 +297,7 @@ export class WindowsOfficeIntegrator {
       certExists,
       certTrusted,
       waker: await this.getWakerStatus(),
+      watcher: await this.getWatcherStatus(),
       launch: {
         target: {
           command: this.launchCommand,

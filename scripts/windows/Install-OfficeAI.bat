@@ -1,4 +1,5 @@
 @echo off
 chcp 65001 >nul
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-OfficeAI.ps1"
+rem 用法: Install-OfficeAI.bat [-LaunchTrigger watcher|waker] [-SkipOffice] [-SkipWps]
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-OfficeAI.ps1" %*
 pause

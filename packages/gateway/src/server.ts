@@ -763,6 +763,18 @@ export async function startGateway(options?: GatewayOptions): Promise<RunningGat
         return;
       }
 
+      if (pathname === '/api/windows/install-watcher' && req.method === 'POST') {
+        const result = await integrator.installOfficeWatcher();
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (pathname === '/api/windows/uninstall-watcher' && req.method === 'POST') {
+        const result = await integrator.uninstallOfficeWatcher();
+        sendJson(res, 200, result);
+        return;
+      }
+
       if (pathname === '/api/windows/install-office' && req.method === 'POST') {
         const result = await integrator.installMsOffice();
         sendJson(res, 200, result);

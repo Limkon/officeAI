@@ -34,7 +34,14 @@
 
 - **不写任何自启项**：不使用注册表 `Run`、启动文件夹或计划任务，重启电脑后不会自动运行。
 - **WPS 全自动**：加载项以**本地离线加载项**安装到 `%APPDATA%\kingsoft\wps\jsaddons`，WPS 启动时直接读取，不依赖网关；点击「OfficeAI 助手」若服务未启动，会自动拉起 OfficeAI（首次可能弹一次 WPS 安全确认）。
-- **Microsoft Office 全自动**：`windows/waker` 提供极小的 **COM 唤醒器**（`OfficeAI.Waker.dll`，`LoadBehavior=3`），Word / Excel / PowerPoint 启动时自动加载，探活 300ms 内失败即拉起网关；自身无界面、不常驻。网关内也可一键安装/卸载。
+- **Microsoft Office 全自动**：二选一（配置中心可切换，只装选中的那个）
+
+| 触发方式 | 实现 | 常驻内存 | Office 启动开销 | 需要登录自启 |
+| --- | --- | --- | --- | --- |
+| **后台监听器**（默认） | `OfficeAI.Watcher.exe`，每 2s 查一次进程列表 | 约 10MB | **0**（完全不进 Office 进程） | 是（计划任务） |
+| Office 唤醒器 | `OfficeAI.Waker.dll`（COM，`LoadBehavior=3`） | 0 | 探活 ≤300ms | 否 |
+
+  两者都不提供界面，侧边栏仍由 Web 加载项提供；也可用 `officeai://` + 桌面快捷方式手动拉起。
 - **兜底**：未安装唤醒器时，可用 `officeai://` 协议 + 桌面「OfficeAI 启动」快捷方式一键拉起。
 - **用完即走**：退出判定是「**引用计数**」式的——只要还有任一 Office/WPS 进程在跑，或仍有侧边栏在发心跳，网关就继续运行；两者都归零后 15 秒内自动退出。
 

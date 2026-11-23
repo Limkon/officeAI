@@ -159,6 +159,15 @@ export const apiClient = {
     return requestJson('/api/windows/uninstall-waker', { method: 'POST' });
   },
 
+  /** 后台监听器（常驻轻量进程，Office 启动路径零开销） */
+  installWatcher(): Promise<IntegrationResult> {
+    return requestJson('/api/windows/install-watcher', { method: 'POST' });
+  },
+
+  uninstallWatcher(): Promise<IntegrationResult> {
+    return requestJson('/api/windows/uninstall-watcher', { method: 'POST' });
+  },
+
   unregisterProtocol(): Promise<IntegrationResult> {
     return requestJson('/api/windows/unregister-protocol', { method: 'POST' });
   },

@@ -64,6 +64,9 @@ async function main() {
     'install-wps',
     'install-office',
     'install-waker',
+    'install-watcher',
+    'uninstall-waker',
+    'uninstall-watcher',
     'install-all',
     'status',
     'install-protocol',
@@ -123,9 +126,35 @@ async function main() {
       res.details?.forEach((d) => console.log('  -', d));
     }
 
-    if (cmd === 'install-waker' || cmd === 'install-all') {
-      const res = await integrator.installOfficeWaker();
+    if (cmd === 'uninstall-waker') {
+      const res = await integrator.uninstallOfficeWaker();
       console.log('[Waker]', res.message);
+      return;
+    }
+
+    if (cmd === 'uninstall-watcher') {
+      const res = await integrator.uninstallOfficeWatcher();
+      console.log('[Watcher]', res.message);
+      return;
+    }
+
+    // 只有在 launchTrigger = watcher 时才装监听器；waker 模式走 COM 加载项
+    if (cmd === 'install-waker' || cmd === 'install-all') {
+      const trigger = store.getConfig().settings.launchTrigger;
+      if (cmd === 'install-all' && trigger === 'watcher') {
+        const res = await integrator.installOfficeWatcher();
+        console.log('[Watcher]', res.message);
+        res.details?.forEach((d) => console.log('  -', d));
+      } else {
+        const res = await integrator.installOfficeWaker();
+        console.log('[Waker]', res.message);
+        res.details?.forEach((d) => console.log('  -', d));
+      }
+    }
+
+    if (cmd === 'install-watcher') {
+      const res = await integrator.installOfficeWatcher();
+      console.log('[Watcher]', res.message);
       res.details?.forEach((d) => console.log('  -', d));
     }
 

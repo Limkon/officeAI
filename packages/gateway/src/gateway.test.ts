@@ -252,6 +252,23 @@ test('On-demand launch: settings normalize, start page & office status are serve
     const idleJson = (await idleRes.json()) as { settings: { idleExitMinutes: number } };
     assert.equal(idleJson.settings.idleExitMinutes, 240);
 
+    // launchTrigger must stay one of the two supported values
+    const triggerRes = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ launchTrigger: 'waker' })
+    });
+    const triggerJson = (await triggerRes.json()) as { settings: { launchTrigger: string } };
+    assert.equal(triggerJson.settings.launchTrigger, 'waker');
+
+    const badTrigger = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ launchTrigger: 'nonsense' })
+    });
+    const badJson = (await badTrigger.json()) as { settings: { launchTrigger: string } };
+    assert.equal(badJson.settings.launchTrigger, 'watcher');
+
     // The launcher page is what WPS/Office users see when the gateway is down
     const startRes = await fetch(`${gw.httpUrl}/start`);
     assert.equal(startRes.status, 200);

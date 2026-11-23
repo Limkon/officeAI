@@ -52,6 +52,9 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
   next.idleExitMinutes = Number.isFinite(idle) ? Math.min(240, Math.max(0, Math.round(idle))) : 10;
   const grace = Number(next.sessionGraceMinutes);
   next.sessionGraceMinutes = Number.isFinite(grace) ? Math.min(30, Math.max(1, Math.round(grace))) : 2;
+  if (next.launchTrigger !== 'watcher' && next.launchTrigger !== 'waker') {
+    next.launchTrigger = 'watcher';
+  }
 
   return next;
 }

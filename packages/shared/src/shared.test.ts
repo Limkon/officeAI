@@ -95,4 +95,5 @@ test('createDefaultConfig defaults to on-demand launch (no autostart)', () => {
   assert.equal(cfg.settings.launchMode, 'on-demand');
   assert.equal(cfg.settings.autoStartGateway, false);
   assert.equal(cfg.settings.exitWithOffice, true);
+  assert.equal(cfg.settings.launchTrigger, 'watcher');
 });

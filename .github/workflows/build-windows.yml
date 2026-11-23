@@ -37,18 +37,26 @@ jobs:
         shell: pwsh
         run: ./windows/waker/install-waker.ps1 -Action Install -Build
 
+      - name: Build Office watcher (background listener)
+        shell: pwsh
+        run: ./windows/waker/install-watcher.ps1 -Action Install -Build
+
       - name: Verify waker DLL built
         shell: pwsh
         run: |
           if (-not (Test-Path ./windows/waker/build/OfficeAI.Waker.dll)) { throw 'OfficeAI.Waker.dll 未生成' }
+          if (-not (Test-Path ./windows/waker/build/OfficeAI.Watcher.exe)) { throw 'OfficeAI.Watcher.exe 未生成' }
           New-Item -ItemType Directory -Force -Path ./release/waker | Out-Null
           Copy-Item ./windows/waker/build/OfficeAI.Waker.dll ./release/waker/OfficeAI.Waker.dll -Force
-          Get-Item ./windows/waker/build/OfficeAI.Waker.dll | Select-Object Name, Length
+          Copy-Item ./windows/waker/build/OfficeAI.Watcher.exe ./release/waker/OfficeAI.Watcher.exe -Force
+          Get-ChildItem ./release/waker | Select-Object Name, Length
 
-      - name: Unregister waker (CI is a throwaway runner)
+      - name: Unregister waker/watcher (CI is a throwaway runner)
         shell: pwsh
-        run: ./windows/waker/install-waker.ps1 -Action Uninstall
         continue-on-error: true
+        run: |
+          ./windows/waker/install-waker.ps1 -Action Uninstall
+          ./windows/waker/install-watcher.ps1 -Action Uninstall
 
       - name: Build Windows Portable ZIP (includes waker)
         run: npm run package:portable

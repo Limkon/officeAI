@@ -15,8 +15,11 @@ param(
   [switch]$SkipOffice,
   [switch]$SkipWps,
   [switch]$SkipProtocol,
-  # 安装 Office 唤醒器（Word/Excel/PPT 启动时自动拉起网关）
-  [switch]$SkipWaker
+  # 由谁来拉起网关：watcher（后台监听器，默认）或 waker（Office COM 加载项）
+  [ValidateSet('watcher', 'waker')]
+  [string]$LaunchTrigger = 'watcher',
+  # 跳过自动启动组件（监听器 / 唤醒器）
+  [switch]$SkipAutoStart
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,7 +76,7 @@ $step = 0
 $total = 0
 if (-not $SkipWps) { $total++ }
 if (-not $SkipProtocol) { $total++ }
-if (-not $SkipWaker) { $total++ }
+if (-not $SkipAutoStart) { $total++ }
 if (-not $SkipOffice) { $total++ }
 
 if (-not $SkipWps) {
@@ -88,10 +91,15 @@ if (-not $SkipProtocol) {
   node $CliPath install-protocol
 }
 
-if (-not $SkipWaker) {
+if (-not $SkipAutoStart) {
   $step++
-  Write-Host "`n[$step/$total] 正在安装 Office 唤醒器（打开 Word/Excel/PPT 自动启动）..." -ForegroundColor Yellow
-  node $CliPath install-waker
+  if ($LaunchTrigger -eq 'waker') {
+    Write-Host "`n[$step/$total] 正在安装 Office 唤醒器（COM 加载项，无常驻进程）..." -ForegroundColor Yellow
+    node $CliPath install-waker
+  } else {
+    Write-Host "`n[$step/$total] 正在安装后台监听器（常驻约 10MB，Office 启动零开销）..." -ForegroundColor Yellow
+    node $CliPath install-watcher
+  }
 }
 
 if (-not $SkipOffice) {
@@ -102,6 +110,11 @@ if (-not $SkipOffice) {
 
 Write-Host "`n安装完成！" -ForegroundColor Green
 Write-Host "· WPS：重启 WPS 后点击顶部「OfficeAI 助手」，服务未启动时会自动拉起（不随系统开机自启）。"
-Write-Host "· Office：安装唤醒器后，打开 Word / Excel / PPT 即自动启动，无需任何额外操作。"
-Write-Host "· 若唤醒器未安装成功，可双击桌面「OfficeAI 启动」快捷方式手动拉起。"
+if ($LaunchTrigger -eq 'waker') {
+  Write-Host "· Office：已安装唤醒器，打开 Word / Excel / PPT 即自动启动。"
+} else {
+  Write-Host "· Office：已安装后台监听器（登录自启），打开 Word / Excel / PPT 即自动启动。"
+  Write-Host "  如不希望登录自启，可改用：Install-OfficeAI.bat -LaunchTrigger waker"
+}
+Write-Host "· 若自动启动组件未安装成功，可双击桌面「OfficeAI 启动」快捷方式手动拉起。"
 Write-Host "· 关闭所有 Office / WPS 后，网关会在后台自动退出。"

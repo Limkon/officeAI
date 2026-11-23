@@ -357,7 +357,8 @@ export function createDefaultConfig(): AppConfig {
       gatewayLaunchCommand: '',
       exitWithOffice: true,
       idleExitMinutes: 10,
-      sessionGraceMinutes: 2
+      sessionGraceMinutes: 2,
+      launchTrigger: 'watcher'
     },
     providers: createDefaultProviders(),
     prompts: [...DEFAULT_PROMPT_ACTIONS]
