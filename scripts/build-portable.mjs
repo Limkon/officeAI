@@ -38,6 +38,16 @@ if (fs.existsSync(path.join(root, 'node_modules', 'node-forge'))) {
   copyDir(path.join(root, 'node_modules', 'node-forge'), path.join(outDir, 'node_modules', 'node-forge'));
 }
 
+// Copy the Office waker (COM add-in) so the installer can register it
+const wakerDir = path.join(root, 'windows', 'waker');
+if (fs.existsSync(wakerDir)) {
+  copyDir(wakerDir, path.join(outDir, 'waker'));
+  const built = path.join(root, 'release', 'waker', 'OfficeAI.Waker.dll');
+  if (fs.existsSync(built)) {
+    fs.copyFileSync(built, path.join(outDir, 'waker', 'OfficeAI.Waker.dll'));
+  }
+}
+
 // Copy Windows helper scripts
 fs.copyFileSync(path.join(root, 'scripts', 'windows', 'Start-OfficeAI.bat'), path.join(outDir, 'Start-OfficeAI.bat'));
 fs.copyFileSync(path.join(root, 'scripts', 'windows', 'Install-OfficeAI.bat'), path.join(outDir, 'Install-OfficeAI.bat'));

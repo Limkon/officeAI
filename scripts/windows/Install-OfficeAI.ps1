@@ -14,7 +14,9 @@
 param(
   [switch]$SkipOffice,
   [switch]$SkipWps,
-  [switch]$SkipProtocol
+  [switch]$SkipProtocol,
+  # 安装 Office 唤醒器（Word/Excel/PPT 启动时自动拉起网关）
+  [switch]$SkipWaker
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,6 +73,7 @@ $step = 0
 $total = 0
 if (-not $SkipWps) { $total++ }
 if (-not $SkipProtocol) { $total++ }
+if (-not $SkipWaker) { $total++ }
 if (-not $SkipOffice) { $total++ }
 
 if (-not $SkipWps) {
@@ -85,6 +88,12 @@ if (-not $SkipProtocol) {
   node $CliPath install-protocol
 }
 
+if (-not $SkipWaker) {
+  $step++
+  Write-Host "`n[$step/$total] 正在安装 Office 唤醒器（打开 Word/Excel/PPT 自动启动）..." -ForegroundColor Yellow
+  node $CliPath install-waker
+}
+
 if (-not $SkipOffice) {
   $step++
   Write-Host "`n[$step/$total] 正在注册 Microsoft Office 加载项并信任本地 HTTPS 证书..." -ForegroundColor Yellow
@@ -93,5 +102,6 @@ if (-not $SkipOffice) {
 
 Write-Host "`n安装完成！" -ForegroundColor Green
 Write-Host "· WPS：重启 WPS 后点击顶部「OfficeAI 助手」，服务未启动时会自动拉起（不随系统开机自启）。"
-Write-Host "· Office：双击桌面「OfficeAI 启动」快捷方式拉起服务，再打开 Word / Excel / PPT。"
+Write-Host "· Office：安装唤醒器后，打开 Word / Excel / PPT 即自动启动，无需任何额外操作。"
+Write-Host "· 若唤醒器未安装成功，可双击桌面「OfficeAI 启动」快捷方式手动拉起。"
 Write-Host "· 关闭所有 Office / WPS 后，网关会在后台自动退出。"

@@ -24,7 +24,15 @@ export class WindowsOfficeIntegrator {
     private readonly httpsPort: number,
     private readonly assetsRoot: string,
     /** How OfficeAI itself is started (used to wire on-demand launch) */
-    private readonly launchCommand = ''
+    private readonly launchCommand = '',
+    /** Optional lifecycle snapshot provider (sessions / uptime) */
+    private readonly getLifecycleStatus?: () => {
+      mode: string;
+      launcher: string;
+      upMinutes: number;
+      lastActivitySeconds: number;
+      sessions: Array<{ app: string; source: string; idleSeconds: number }>;
+    } | null
   ) {}
 
   /** Folder name of the locally installed (offline) WPS add-in */
@@ -34,6 +42,38 @@ export class WindowsOfficeIntegrator {
 
   private get wpsLocalAddonPath(): string {
     return path.join(this.wpsAddonsRoot, this.wpsAddonFolderName);
+  }
+
+  /** Office 唤醒器（COM 加载项）DLL 的位置 */
+  private get wakerDllCandidates(): string[] {
+    return [
+      path.join(this.assetsRoot, 'waker', 'OfficeAI.Waker.dll'),
+      path.join(this.dataDir, 'waker', 'OfficeAI.Waker.dll'),
+      path.join(this.assetsRoot, '..', 'windows', 'waker', 'build', 'OfficeAI.Waker.dll')
+    ];
+  }
+
+  private async getWakerStatus(): Promise<{ installed: boolean; loadBehavior: Record<string, number | null> }> {
+    const loadBehavior: Record<string, number | null> = { Word: null, Excel: null, PowerPoint: null };
+    if (!this.isWindows) return { installed: false, loadBehavior };
+
+    let installed = false;
+    for (const app of Object.keys(loadBehavior)) {
+      try {
+        const { stdout } = await this.runReg([
+          'query',
+          `HKCU\\Software\\Microsoft\\Office\\${app}\\Addins\\OfficeAI.Waker`,
+          '/v',
+          'LoadBehavior'
+        ]);
+        const match = /LoadBehavior\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(stdout);
+        loadBehavior[app] = match ? parseInt(match[1], 16) : 3;
+        if (loadBehavior[app] === 3) installed = true;
+      } catch {
+        loadBehavior[app] = null;
+      }
+    }
+    return { installed, loadBehavior };
   }
 
   private async isProtocolRegistered(): Promise<boolean> {
@@ -176,6 +216,7 @@ export class WindowsOfficeIntegrator {
       gatewayHttpsUrl: `https://127.0.0.1:${this.httpsPort}`,
       certExists,
       certTrusted,
+      waker: await this.getWakerStatus(),
       launch: {
         target: {
           command: this.launchCommand,
@@ -190,7 +231,8 @@ export class WindowsOfficeIntegrator {
         startPageUrl: `${httpUrl}/start`,
         launchUrl: buildGatewayLaunchUrl(httpUrl, 'office'),
         officeRunning: officeState.running,
-        runningProcesses: officeState.processes
+        runningProcesses: officeState.processes,
+        lifecycle: this.getLifecycleStatus?.() ?? undefined
       },
       msOffice: {
         detected: msDetected,
@@ -244,6 +286,66 @@ export class WindowsOfficeIntegrator {
       return {
         ok: false,
         message: `导入证书失败: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  /**
+   * 安装 Office 唤醒器：一个极小的 COM 加载项，Word/Excel/PPT 启动时由它
+   * 拉起本地网关（不提供 UI，不常驻）。这是"打开 Office 才启动"的关键。
+   */
+  async installOfficeWaker(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) {
+      return { ok: false, message: '唤醒器仅支持 Windows。' };
+    }
+
+    const dll = this.wakerDllCandidates.find((candidate) => fs.existsSync(candidate));
+    if (!dll) {
+      return {
+        ok: false,
+        message:
+          '未找到 OfficeAI.Waker.dll。请先运行 windows/waker/install-waker.ps1 -Action Install -Build 编译并注册。'
+      };
+    }
+
+    const script = path.join(this.assetsRoot, 'waker', 'install-waker.ps1');
+    if (!fs.existsSync(script)) {
+      return {
+        ok: false,
+        message: `未找到安装脚本：${script}。可手动执行 windows/waker/install-waker.ps1 -Action Install -Build`
+      };
+    }
+
+    try {
+      const { stdout, stderr } = await this.runPowerShell(
+        `& '${script.replace(/'/g, "''")}' -Action Install -DllPath '${dll.replace(/'/g, "''")}'`
+      );
+      return {
+        ok: true,
+        message:
+          'Office 唤醒器安装成功！下次打开 Word / Excel / PowerPoint 时会自动启动 OfficeAI，全部关闭后自动退出。',
+        details: [stdout.trim(), stderr.trim()].filter(Boolean)
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `唤醒器安装失败：${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  async uninstallOfficeWaker(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) {
+      return { ok: false, message: '唤醒器仅支持 Windows。' };
+    }
+    const script = path.join(this.assetsRoot, 'waker', 'install-waker.ps1');
+    try {
+      await this.runPowerShell(`& '${script.replace(/'/g, "''")}' -Action Uninstall`);
+      return { ok: true, message: '已卸载 Office 唤醒器，Office 不再自动启动 OfficeAI。' };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `卸载唤醒器失败：${err instanceof Error ? err.message : String(err)}`
       };
     }
   }

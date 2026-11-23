@@ -49,7 +49,9 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
   next.gatewayLaunchCommand = typeof next.gatewayLaunchCommand === 'string' ? next.gatewayLaunchCommand.trim() : '';
   next.exitWithOffice = next.exitWithOffice !== false;
   const idle = Number(next.idleExitMinutes);
-  next.idleExitMinutes = Number.isFinite(idle) ? Math.min(240, Math.max(0, Math.round(idle))) : 15;
+  next.idleExitMinutes = Number.isFinite(idle) ? Math.min(240, Math.max(0, Math.round(idle))) : 10;
+  const grace = Number(next.sessionGraceMinutes);
+  next.sessionGraceMinutes = Number.isFinite(grace) ? Math.min(30, Math.max(1, Math.round(grace))) : 2;
 
   return next;
 }
@@ -102,11 +104,14 @@ export class ConfigStore {
         ...(parsed.settings ?? {})
       });
 
-      // Legacy configs created before launchMode existed had no on-demand
-      // support: treat them as "always on" to preserve previous behaviour.
-      if (!hasLaunchSettings && !(parsed.settings as Partial<AppSettings> | undefined)?.autoStartGateway) {
-        mergedSettings.launchMode = 'always';
-        mergedSettings.autoStartGateway = true;
+      // Configs that predate the on-demand work have no launch settings at all:
+      // adopt the new default (on-demand) since exit-on-close is now reliable,
+      // but keep legacy `autoStartGateway: true` meaning "always".
+      const savedSettings = parsed.settings as Partial<AppSettings> | undefined;
+      if (!hasLaunchSettings) {
+        const wantAlways = Boolean(savedSettings?.autoStartGateway);
+        mergedSettings.launchMode = wantAlways ? 'always' : 'on-demand';
+        mergedSettings.autoStartGateway = wantAlways;
       }
 
       return {

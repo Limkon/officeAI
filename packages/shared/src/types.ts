@@ -85,6 +85,8 @@ export interface AppSettings {
   exitWithOffice: boolean;
   /** 最后一段时间无请求后自动退出；0 表示不按空闲退出 */
   idleExitMinutes: number;
+  /** 加载项心跳超时（分钟）：页面关闭后多久视为该窗口已释放 */
+  sessionGraceMinutes: number;
 }
 
 export interface UsageRecord {
@@ -164,6 +166,11 @@ export interface WindowsOfficeStatus {
   gatewayHttpsUrl: string;
   certExists: boolean;
   certTrusted: boolean;
+  /** Office 唤醒器（COM 加载项）：随 Word/Excel/PPT 启动自动拉起网关 */
+  waker?: {
+    installed: boolean;
+    loadBehavior: Record<string, number | null>;
+  };
   /** How OfficeAI is started on demand, and whether the one-click link is ready */
   launch?: {
     target: LaunchTargetInfo;
@@ -172,6 +179,13 @@ export interface WindowsOfficeStatus {
     launchUrl: string;
     officeRunning: boolean;
     runningProcesses: string[];
+    lifecycle?: {
+      mode: string;
+      launcher: string;
+      upMinutes: number;
+      lastActivitySeconds: number;
+      sessions: Array<{ app: string; source: string; idleSeconds: number }>;
+    };
   };
   msOffice: {
     detected: boolean;

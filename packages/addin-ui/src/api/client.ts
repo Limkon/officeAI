@@ -113,6 +113,14 @@ export const apiClient = {
     return requestJson('/api/usage', { method: 'DELETE' });
   },
 
+  /** Heartbeat: keeps the gateway alive while this task pane is open */
+  pingSession(app: string, source = 'addin'): Promise<{ ok: boolean }> {
+    return requestJson('/api/office/session', {
+      method: 'POST',
+      body: JSON.stringify({ app, source })
+    });
+  },
+
   getWindowsStatus(): Promise<WindowsOfficeStatus> {
     return requestJson('/api/windows/status');
   },
@@ -140,6 +148,15 @@ export const apiClient = {
   /** Registers officeai:// so Office users can start the gateway with one click */
   registerProtocol(): Promise<IntegrationResult> {
     return requestJson('/api/windows/register-protocol', { method: 'POST' });
+  },
+
+  /** Office 唤醒器：让 Word/Excel/PPT 启动时自动拉起网关 */
+  installWaker(): Promise<IntegrationResult> {
+    return requestJson('/api/windows/install-waker', { method: 'POST' });
+  },
+
+  uninstallWaker(): Promise<IntegrationResult> {
+    return requestJson('/api/windows/uninstall-waker', { method: 'POST' });
   },
 
   unregisterProtocol(): Promise<IntegrationResult> {

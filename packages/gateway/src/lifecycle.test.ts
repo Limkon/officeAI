@@ -76,6 +76,31 @@ test('LifecycleMonitor exits after Office closes and the grace period passes', a
   assert.match(h.exits[0], /Office/);
 });
 
+test('LifecycleMonitor keeps running while a task pane heartbeat is fresh', async () => {
+  // No office process (e.g. an unexpected process name), but the pane is alive
+  const h = createHarness({ exitWithOffice: true, idleExitMinutes: 0, sessionGraceMinutes: 2 }, [false]);
+  h.monitor.watch({ app: 'winword', source: 'addin' });
+  await h.tick(2);
+  assert.deepEqual(h.exits, []);
+
+  // Heartbeat expires → no process, no session → exit
+  h.advance(5 * 60_000);
+  await h.tick(2);
+  assert.equal(h.exits.length, 1);
+  assert.match(h.exits[0], /Office/);
+});
+
+test('LifecycleMonitor refreshes session grace on each heartbeat', async () => {
+  const h = createHarness({ exitWithOffice: true, idleExitMinutes: 0, sessionGraceMinutes: 2 }, [false]);
+  for (let i = 0; i < 4; i += 1) {
+    h.monitor.watch({ app: 'wps', source: 'addin' });
+    h.advance(60_000); // heartbeat every minute, grace is 2 minutes
+    await h.tick(1);
+  }
+  assert.deepEqual(h.exits, []);
+  assert.equal(h.monitor.getStatus().sessions.length, 1);
+});
+
 test('LifecycleMonitor exits on idle timeout even if Office stays open', async () => {
   const h = createHarness({ idleExitMinutes: 15 }, [true]);
   await h.tick(1);

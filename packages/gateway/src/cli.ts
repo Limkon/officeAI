@@ -60,7 +60,15 @@ async function main() {
     dataDir: store.dataDir
   });
 
-  const integrationCommands = ['install-wps', 'install-office', 'install-all', 'status', 'install-protocol', 'uninstall-protocol'];
+  const integrationCommands = [
+    'install-wps',
+    'install-office',
+    'install-waker',
+    'install-all',
+    'status',
+    'install-protocol',
+    'uninstall-protocol'
+  ];
   if (integrationCommands.includes(cmd)) {
     ensureLocalhostCert(store.dataDir);
     const paths = resolveGatewayPaths();
@@ -112,6 +120,12 @@ async function main() {
     if (cmd === 'install-wps' || cmd === 'install-all') {
       const res = await integrator.installWps();
       console.log('[WPS]', res.message);
+      res.details?.forEach((d) => console.log('  -', d));
+    }
+
+    if (cmd === 'install-waker' || cmd === 'install-all') {
+      const res = await integrator.installOfficeWaker();
+      console.log('[Waker]', res.message);
       res.details?.forEach((d) => console.log('  -', d));
     }
 

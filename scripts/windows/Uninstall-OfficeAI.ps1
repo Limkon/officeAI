@@ -28,6 +28,17 @@ foreach ($AddinId in @("b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a00", "b8d4c3e2-71a0-4f
 }
 Write-Host "已清理 Microsoft Office 注册项。"
 
+# 卸载 Office 唤醒器（COM 加载项）
+$WakerScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "waker\install-waker.ps1"
+if (Test-Path $WakerScript) {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $WakerScript -Action Uninstall
+} else {
+  foreach ($app in @("Word", "Excel", "PowerPoint")) {
+    $key = "HKCU:\Software\Microsoft\Office\$app\Addins\OfficeAI.Waker"
+    if (Test-Path $key) { Remove-Item -Path $key -Recurse -Force }
+  }
+}
+
 # 清理按需启动使用的 officeai:// 协议与桌面快捷方式
 $ProtocolKey = "HKCU:\Software\Classes\officeai"
 if (Test-Path $ProtocolKey) {

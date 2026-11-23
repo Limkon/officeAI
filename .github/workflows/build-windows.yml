@@ -33,7 +33,24 @@ jobs:
       - name: Run unit & gateway integration tests
         run: npm test
 
-      - name: Build Windows Portable ZIP
+      - name: Build Office waker (COM add-in)
+        shell: pwsh
+        run: ./windows/waker/install-waker.ps1 -Action Install -Build
+
+      - name: Verify waker DLL built
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ./windows/waker/build/OfficeAI.Waker.dll)) { throw 'OfficeAI.Waker.dll 未生成' }
+          New-Item -ItemType Directory -Force -Path ./release/waker | Out-Null
+          Copy-Item ./windows/waker/build/OfficeAI.Waker.dll ./release/waker/OfficeAI.Waker.dll -Force
+          Get-Item ./windows/waker/build/OfficeAI.Waker.dll | Select-Object Name, Length
+
+      - name: Unregister waker (CI is a throwaway runner)
+        shell: pwsh
+        run: ./windows/waker/install-waker.ps1 -Action Uninstall
+        continue-on-error: true
+
+      - name: Build Windows Portable ZIP (includes waker)
         run: npm run package:portable
 
       - name: Build Electron Windows NSIS Installer & Portable EXE

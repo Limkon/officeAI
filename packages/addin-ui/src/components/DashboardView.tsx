@@ -89,7 +89,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     config.settings.gatewayLaunchCommand ?? ''
   );
   const [exitWithOffice, setExitWithOffice] = useState(config.settings.exitWithOffice !== false);
-  const [idleExitMinutes, setIdleExitMinutes] = useState(config.settings.idleExitMinutes ?? 15);
+  const [idleExitMinutes, setIdleExitMinutes] = useState(config.settings.idleExitMinutes ?? 10);
+  const [sessionGraceMinutes, setSessionGraceMinutes] = useState(
+    config.settings.sessionGraceMinutes ?? 2
+  );
   const [savingLaunch, setSavingLaunch] = useState(false);
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
 
@@ -221,12 +224,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setLaunchMode(config.settings.launchMode ?? 'on-demand');
     setGatewayLaunchCommand(config.settings.gatewayLaunchCommand ?? '');
     setExitWithOffice(config.settings.exitWithOffice !== false);
-    setIdleExitMinutes(config.settings.idleExitMinutes ?? 15);
+    setIdleExitMinutes(config.settings.idleExitMinutes ?? 10);
+    setSessionGraceMinutes(config.settings.sessionGraceMinutes ?? 2);
   }, [
     config.settings.launchMode,
     config.settings.gatewayLaunchCommand,
     config.settings.exitWithOffice,
-    config.settings.idleExitMinutes
+    config.settings.idleExitMinutes,
+    config.settings.sessionGraceMinutes
   ]);
 
   const handleSaveLaunchSettings = async () => {
@@ -238,7 +243,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         autoStartGateway: launchMode === 'always',
         gatewayLaunchCommand: gatewayLaunchCommand.trim(),
         exitWithOffice,
-        idleExitMinutes
+        idleExitMinutes,
+        sessionGraceMinutes
       });
       await onRefreshConfig();
       setLaunchMsg('启动方式已保存');
@@ -951,7 +957,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div>
                   <h3 className="text-base font-bold text-slate-900">启动方式（按需启动，不做开机自启）</h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    助手只在真正需要时运行：打开 Office / WPS 并点击「OfficeAI 助手」时自动拉起，关闭后自动退出。
+                    助手生命周期与办公软件绑定：打开 Office / WPS 时自动拉起（安装唤醒器后 Word/Excel/PPT 也能自动拉起），
+                    所有办公窗口关闭或侧边栏心跳停止后自动退出，不浪费系统资源。
                   </p>
                 </div>
                 {launchMsg && <span className="text-xs font-medium text-emerald-600">{launchMsg}</span>}
@@ -1022,6 +1029,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    侧边栏心跳超时（分钟，页面关闭后多久释放网关）
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={sessionGraceMinutes}
+                    onChange={(e) => setSessionGraceMinutes(Number(e.target.value))}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
               </div>
 
               <label className="flex items-center gap-2 text-xs text-slate-700">
@@ -1057,6 +1077,69 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   )}
                 </div>
                 <div>Office / WPS 进程：{winStatus?.launch?.officeRunning ? '运行中' : '未检测到'}</div>
+                {winStatus?.launch?.lifecycle?.sessions?.length ? (
+                  <div>
+                    活跃侧边栏：
+                    {winStatus.launch.lifecycle.sessions
+                      .map((s) => `${s.app}（${s.idleSeconds}s）`)
+                      .join('、')}
+                  </div>
+                ) : (
+                  <div>活跃侧边栏：无（网关将按设定自动退出）</div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-slate-700 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      Office 唤醒器（打开 Word/Excel/PPT 自动启动）
+                      <span
+                        className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${
+                          winStatus?.waker?.installed
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-slate-200 text-slate-600'
+                        }`}
+                      >
+                        {winStatus?.waker?.installed ? '已安装' : '未安装'}
+                      </span>
+                    </div>
+                    <p className="mt-1 leading-relaxed text-slate-600">
+                      极小的 COM 加载项：Office 启动时探活并在需要时拉起网关，自身不常驻、无界面。
+                      全部 Office / WPS 关闭后网关自动退出。
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    {!winStatus?.waker?.installed && (
+                      <button
+                        type="button"
+                        disabled={winBusy}
+                        onClick={() => void handleWinAction(() => apiClient.installWaker())}
+                        className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                      >
+                        安装唤醒器
+                      </button>
+                    )}
+                    {winStatus?.waker?.installed && (
+                      <button
+                        type="button"
+                        disabled={winBusy}
+                        onClick={() => void handleWinAction(() => apiClient.uninstallWaker())}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        卸载
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {winStatus?.waker?.installed && (
+                  <div className="text-[11px] text-slate-500">
+                    LoadBehavior:{' '}
+                    {Object.entries(winStatus.waker.loadBehavior)
+                      .map(([app, v]) => `${app}=${v ?? '未注册'}`)
+                      .join(' · ')}
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end">

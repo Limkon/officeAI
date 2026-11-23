@@ -29,11 +29,22 @@
 - **Microsoft Office（2016 / 2019 / 2021 / Microsoft 365）**：
   - 基于 Office Web Add-in（`Office.js`）+ 自动生成并信任的本地 HTTPS 证书（`Cert:\CurrentUser\Root`），一键旁加载到 Word / Excel / PowerPoint。
 
-### 3. 按需启动（不做开机自启）
+### 3. 生命周期绑定办公软件（不做开机自启，也不后台常驻）
+**设计目标：打开 Office / WPS 才启动，全部关闭即退出，不浪费系统资源。**
+
 - **不写任何自启项**：不使用注册表 `Run`、启动文件夹或计划任务，重启电脑后不会自动运行。
-- **WPS 全自动**：加载项以**本地离线加载项**安装到 `%APPDATA%\kingsoft\wps\jsaddons`，WPS 启动时直接读取，不依赖网关；点击「OfficeAI 助手」按钮若发现服务未启动，会自动拉起 OfficeAI（首次可能弹一次 WPS 安全确认）。
-- **Microsoft Office 一键启动**：Office Web Add-in 受沙箱限制无法启动本地进程，因此注册 `officeai://` 协议并生成桌面「OfficeAI 启动」快捷方式，点一下即可拉起网关，再打开 Word / Excel / PPT。
-- **用完即走**：所有 Office / WPS 进程关闭后（或空闲超过设定分钟数）网关自动退出，不在后台常驻。
+- **WPS 全自动**：加载项以**本地离线加载项**安装到 `%APPDATA%\kingsoft\wps\jsaddons`，WPS 启动时直接读取，不依赖网关；点击「OfficeAI 助手」若服务未启动，会自动拉起 OfficeAI（首次可能弹一次 WPS 安全确认）。
+- **Microsoft Office 全自动**：`windows/waker` 提供极小的 **COM 唤醒器**（`OfficeAI.Waker.dll`，`LoadBehavior=3`），Word / Excel / PowerPoint 启动时自动加载，探活 300ms 内失败即拉起网关；自身无界面、不常驻。网关内也可一键安装/卸载。
+- **兜底**：未安装唤醒器时，可用 `officeai://` 协议 + 桌面「OfficeAI 启动」快捷方式一键拉起。
+- **用完即走**：退出判定是「**引用计数**」式的——只要还有任一 Office/WPS 进程在跑，或仍有侧边栏在发心跳，网关就继续运行；两者都归零后 15 秒内自动退出。
+
+| 退出条件 | 判定方式 |
+| --- | --- |
+| Office / WPS 全部关闭 | `tasklist` 检测 `winword / excel / powerpnt / wps / et / wpp` 归零 |
+| 所有侧边栏已关闭 | 加载项每 30s `POST /api/office/session` 心跳，超时（默认 2 分钟）即释放 |
+| 长时间无人使用 | 空闲 `idleExitMinutes`（默认 10 分钟）无任何请求 |
+
+仅有约 15–30ms 的空转检测开销：轮询间隔 5 秒，仅在 `on-demand` 模式下运行。
 
 ### 4. Windows 桌面托盘控制中心
 - 提供 Electron Windows 桌面应用（`OfficeAI-Setup.exe` 安装版 & Portable 便携版）与命令行/便携脚本版。

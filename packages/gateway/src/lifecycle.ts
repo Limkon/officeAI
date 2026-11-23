@@ -1,14 +1,25 @@
 import type { AppSettings } from '@officeai/shared';
 import { detectOfficeProcesses, type OfficeProcessState } from './process-watch.js';
 
+/** A hosting app currently holding the gateway alive (leak-ref style) */
+export interface OfficeSessionInfo {
+  app: string;
+  /** Agent that reported the session (ws / wps / office / manual) */
+  source: string;
+  lastSeen: number;
+}
+
 export interface LifecycleStatus {
   mode: AppSettings['launchMode'];
+  /** Add-ins that currently hold a session (Word / WPS / …) */
+  sessions: Array<{ app: string; source: string; idleSeconds: number }>;
   /** How this gateway process was started: add-in, desktop app, cli, unknown */
   launcher: string;
   upMinutes: number;
   lastActivitySeconds: number;
   exitWithOffice: boolean;
   idleExitMinutes: number;
+  sessionGraceMinutes: number;
   office: OfficeProcessState;
 }
 
@@ -39,6 +50,8 @@ export class LifecycleMonitor {
   private office: OfficeProcessState = { checked: false, running: true, processes: [] };
   private officeSeen = false;
   private checking = false;
+  /** key = host app name (winword / wps / …) */
+  private readonly sessions = new Map<string, OfficeSessionInfo>();
   private exitRequested = false;
   private readonly launcher: string;
   private readonly detectOffice: () => Promise<OfficeProcessState>;
@@ -48,7 +61,7 @@ export class LifecycleMonitor {
     private readonly options: LifecycleOptions
   ) {
     this.now = options.now ?? (() => Date.now());
-    this.pollMs = options.pollMs ?? 20_000;
+    this.pollMs = options.pollMs ?? 5_000;
     this.launcher = options.launcher ?? 'unknown';
     this.detectOffice = options.detectOffice ?? detectOfficeProcesses;
     this.startedAt = this.now();
@@ -57,6 +70,39 @@ export class LifecycleMonitor {
 
   touch(): void {
     this.lastActivityAt = this.now();
+  }
+
+  /**
+   * Called by an add-in page (Word / WPS / PPT) while it holds a task pane
+   * open. Two independent ways to keep the gateway alive:
+   *   1. the OS process is still running (tasklist based), and
+   *   2. at least one session was reported recently (heartbeat based).
+   * Using both makes "exit when the office app exits" robust: if a process
+   * name is unexpected, the heartbeat still holds the gateway; if the pane
+   * crashes without closing, the process check still releases it.
+   */
+  watch(session: { app: string; source?: string }): void {
+    const app = (session.app || 'unknown').toLowerCase();
+    this.sessions.set(app, {
+      app,
+      source: session.source ?? 'unknown',
+      lastSeen: this.now()
+    });
+    this.touch();
+  }
+
+  private activeSessions(settings: AppSettings): OfficeSessionInfo[] {
+    const now = this.now();
+    const graceMs = Math.max(1, settings.sessionGraceMinutes || 2) * 60_000;
+    const alive: OfficeSessionInfo[] = [];
+    for (const session of this.sessions.values()) {
+      if (now - session.lastSeen > graceMs) {
+        this.sessions.delete(session.app);
+        continue;
+      }
+      alive.push(session);
+    }
+    return alive;
   }
 
   start(): void {
@@ -84,6 +130,12 @@ export class LifecycleMonitor {
       lastActivitySeconds: Math.round((this.now() - this.lastActivityAt) / 1000),
       exitWithOffice: settings.exitWithOffice,
       idleExitMinutes: settings.idleExitMinutes,
+      sessionGraceMinutes: settings.sessionGraceMinutes,
+      sessions: this.activeSessions(settings).map((s) => ({
+        app: s.app,
+        source: s.source,
+        idleSeconds: Math.round((this.now() - s.lastSeen) / 1000)
+      })),
       office: this.office
     };
   }
@@ -106,13 +158,15 @@ export class LifecycleMonitor {
     this.checking = true;
     try {
       this.office = await this.detectOffice();
-      if (this.office.running) {
+      const sessions = this.activeSessions(settings);
+
+      if (this.office.running || sessions.length > 0) {
         this.officeSeen = true;
-      } else if (this.office.checked) {
-        // Give Office/WPS time to show up before treating "nothing running" as final
-        const graceMs = this.officeSeen ? 90_000 : 240_000;
-        const quietFor = this.now() - this.lastActivityAt;
-        if (settings.exitWithOffice && quietFor > graceMs) {
+      } else if (settings.exitWithOffice) {
+        // Nothing is holding us: no office process and no live task pane.
+        // Give a freshly started gateway time for Office to show up.
+        const graceMs = this.officeSeen ? 15_000 : 240_000;
+        if (this.now() - this.lastActivityAt > graceMs) {
           this.requestExit('所有 Office / WPS 窗口均已关闭');
           return;
         }

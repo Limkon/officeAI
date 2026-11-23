@@ -274,6 +274,19 @@ test('On-demand launch: settings normalize, start page & office status are serve
     assert.equal(status.startPageUrl, `${gw.httpUrl}/start`);
     assert.ok(status.launchUrl.startsWith('officeai://activate/'));
 
+    // Task pane heartbeat registers a live session that holds the gateway
+    const beatRes = await fetch(`${gw.httpUrl}/api/office/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app: 'word', source: 'addin' })
+    });
+    assert.equal(beatRes.status, 200);
+    const officeStatus2 = (await (
+      await fetch(`${gw.httpUrl}/api/office/status`)
+    ).json()) as { lifecycle: { sessions: Array<{ app: string }> } };
+    assert.equal(officeStatus2.lifecycle.sessions.length, 1);
+    assert.equal(officeStatus2.lifecycle.sessions[0].app, 'word');
+
     // WPS bootstrap launcher page is bundled with the add-in
     const bootRes = await fetch(`${gw.httpUrl}/wps/bootstrap.html`);
     assert.equal(bootRes.status, 200);

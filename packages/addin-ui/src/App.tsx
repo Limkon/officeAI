@@ -29,6 +29,23 @@ export const App: React.FC = () => {
     setConfig(cfg);
   }, []);
 
+  // 心跳：页面存活期间保持网关运行；页面关闭后网关即可自行退出。
+  // 只有真正嵌在 Word/WPS 里时才发送，避免独立窗口把网关一直吊着。
+  useEffect(() => {
+    if (!host.embedded || mode === 'dashboard') return;
+    let cancelled = false;
+    const beat = () => {
+      if (cancelled) return;
+      void apiClient.pingSession(host.app).catch(() => {});
+    };
+    beat();
+    const timer = window.setInterval(beat, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [host.embedded, host.app, mode]);
+
   useEffect(() => {
     Promise.all([detectHostContext(), apiClient.getConfig()])
       .then(([hostInfo, cfg]) => {

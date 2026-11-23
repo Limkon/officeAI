@@ -356,7 +356,8 @@ export function createDefaultConfig(): AppConfig {
       launchMode: 'on-demand',
       gatewayLaunchCommand: '',
       exitWithOffice: true,
-      idleExitMinutes: 15
+      idleExitMinutes: 10,
+      sessionGraceMinutes: 2
     },
     providers: createDefaultProviders(),
     prompts: [...DEFAULT_PROMPT_ACTIONS]

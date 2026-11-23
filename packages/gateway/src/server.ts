@@ -353,10 +353,25 @@ export async function startGateway(options?: GatewayOptions): Promise<RunningGat
           settings: {
             launchMode: mutableSettings().launchMode,
             exitWithOffice: mutableSettings().exitWithOffice,
-            idleExitMinutes: mutableSettings().idleExitMinutes
+            idleExitMinutes: mutableSettings().idleExitMinutes,
+            sessionGraceMinutes: mutableSettings().sessionGraceMinutes
           },
           lifecycle: lifecycle?.getStatus() ?? null
         });
+        return;
+      }
+
+      // Heartbeat from an open add-in pane (Word / Excel / PPT / WPS).
+      // Keeps the gateway alive while the office window is in use and lets it
+      // exit as soon as every pane is gone.
+      if (pathname === '/api/office/session' && req.method === 'POST') {
+        const body = await readJsonBody<{ app?: string; source?: string }>(req).catch(
+          () => ({}) as { app?: string; source?: string }
+        );
+        const app = (body.app || urlObj.searchParams.get('app') || 'unknown').toString();
+        const source = (body.source || 'addin').toString();
+        lifecycle?.watch({ app, source });
+        sendJson(res, 200, { ok: true, session: { app, source } });
         return;
       }
 
@@ -736,6 +751,18 @@ export async function startGateway(options?: GatewayOptions): Promise<RunningGat
         return;
       }
 
+      if (pathname === '/api/windows/install-waker' && req.method === 'POST') {
+        const result = await integrator.installOfficeWaker();
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (pathname === '/api/windows/uninstall-waker' && req.method === 'POST') {
+        const result = await integrator.uninstallOfficeWaker();
+        sendJson(res, 200, result);
+        return;
+      }
+
       if (pathname === '/api/windows/install-office' && req.method === 'POST') {
         const result = await integrator.installMsOffice();
         sendJson(res, 200, result);
@@ -848,7 +875,18 @@ export async function startGateway(options?: GatewayOptions): Promise<RunningGat
     actualHttpPort,
     actualHttpsPort,
     paths.assetsRoot,
-    launchTarget.command
+    launchTarget.command,
+    () => {
+      if (!lifecycle) return null;
+      const status = lifecycle.getStatus();
+      return {
+        mode: status.mode,
+        launcher: status.launcher,
+        upMinutes: status.upMinutes,
+        lastActivitySeconds: status.lastActivitySeconds,
+        sessions: status.sessions
+      };
+    }
   );
 
   const onExitRequested =
