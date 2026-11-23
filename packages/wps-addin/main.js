@@ -339,7 +339,7 @@
               window.location.replace(GATEWAY_URL + '/?host=' + encodeURIComponent(host));
             } else {
               setState(
-                '仍未能启动。请手动运行「OfficeAI」或 Start-OfficeAI.bat 后重试。' +
+                '仍未能启动。请从开始菜单运行「OfficeAI」后重试。' +
                   (LAUNCH_COMMAND ? '（启动命令：' + LAUNCH_COMMAND + '）' : '')
               );
             }

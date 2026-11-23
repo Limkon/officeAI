@@ -28,28 +28,31 @@ foreach ($AddinId in @("b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a00", "b8d4c3e2-71a0-4f
 }
 Write-Host "已清理 Microsoft Office 注册项。"
 
-# 卸载后台监听器（计划任务 + 常驻进程）
-$WatcherScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "waker\install-watcher.ps1"
-if (Test-Path $WatcherScript) {
-  & powershell -NoProfile -ExecutionPolicy Bypass -File $WatcherScript -Action Uninstall
-} else {
-  $task = Get-ScheduledTask -TaskName 'OfficeAI Watcher' -ErrorAction SilentlyContinue
-  if ($task) {
-    Stop-ScheduledTask -TaskName 'OfficeAI Watcher' -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName 'OfficeAI Watcher' -Confirm:$false
-    Write-Host "已移除计划任务: OfficeAI Watcher"
-  }
-}
-
 # 卸载 Office 唤醒器（COM 加载项）
-$WakerScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "waker\install-waker.ps1"
-if (Test-Path $WakerScript) {
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$WakerScript = @(
+  (Join-Path $ScriptDir "waker\install-waker.ps1"),
+  (Join-Path $ScriptDir "..\..\windows\waker\install-waker.ps1"),
+  (Join-Path $env:LOCALAPPDATA "Programs\OfficeAI\resources\assets\waker\install-waker.ps1")
+) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+if ($WakerScript) {
   & powershell -NoProfile -ExecutionPolicy Bypass -File $WakerScript -Action Uninstall
 } else {
+  # 没有脚本时直接清注册表（与 install-waker.ps1 的卸载逻辑等价）
   foreach ($app in @("Word", "Excel", "PowerPoint")) {
-    $key = "HKCU:\Software\Microsoft\Office\$app\Addins\OfficeAI.Waker"
+    foreach ($root in @("HKCU:\Software\Microsoft\Office\$app\Addins", "HKCU:\Software\Microsoft\Office\16.0\$app\Addins")) {
+      $key = Join-Path $root "OfficeAI.Waker"
+      if (Test-Path $key) { Remove-Item -Path $key -Recurse -Force }
+    }
+  }
+  foreach ($key in @(
+    "HKCU:\Software\Classes\CLSID\{4F1D9C3A-8B27-4E6D-9C41-0A7B5E2D8F31}",
+    "HKCU:\Software\Classes\OfficeAI.Waker"
+  )) {
     if (Test-Path $key) { Remove-Item -Path $key -Recurse -Force }
   }
+  Write-Host "已清理 Office 唤醒器注册项。"
 }
 
 # 清理按需启动使用的 officeai:// 协议与桌面快捷方式

@@ -61,18 +61,11 @@ export interface PromptAction {
 
 /**
  * 网关启动策略：
- * - manual    仅手动启动（桌面客户端 / Start-OfficeAI.bat）
+ * - manual    仅手动启动（桌面客户端 / 开始菜单快捷方式）
  * - on-demand 由 Office / WPS 加载项在用到时自动拉起（推荐）
  * - always    桌面客户端启动即常驻（不做开机自启）
  */
 export type GatewayLaunchMode = 'manual' | 'on-demand' | 'always';
-
-/**
- * 由谁来拉起网关：
- * - watcher 后台监听器常驻轮询进程列表后启动（Office 启动路径零开销）
- * - waker   Office COM 加载项在宿主进程内探活后启动（无常驻进程）
- */
-export type LaunchTrigger = 'watcher' | 'waker';
 
 export interface AppSettings {
   httpPort: number;
@@ -94,8 +87,6 @@ export interface AppSettings {
   idleExitMinutes: number;
   /** 加载项心跳超时（分钟）：页面关闭后多久视为该窗口已释放 */
   sessionGraceMinutes: number;
-  /** 触发方式：后台监听器（常驻）或 Office 唤醒器（无常驻） */
-  launchTrigger: LaunchTrigger;
 }
 
 export interface UsageRecord {
@@ -179,14 +170,6 @@ export interface WindowsOfficeStatus {
   waker?: {
     installed: boolean;
     loadBehavior: Record<string, number | null>;
-  };
-  /** 后台监听器（常驻轻量进程 + 登录自启计划任务） */
-  watcher?: {
-    installed: boolean;
-    running: boolean;
-    state?: string;
-    pid?: number | null;
-    memoryMB?: number | null;
   };
   /** How OfficeAI is started on demand, and whether the one-click link is ready */
   launch?: {
