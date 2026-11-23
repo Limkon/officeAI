@@ -59,6 +59,11 @@ async function runHeadlessIntegration(): Promise<void> {
   const res = await integrator.installAll();
   console.log(`[OfficeAI:integrate] ok=${res.ok} ${res.message}`);
   res.details?.forEach((d: string) => console.log(`  - ${d}`));
+  if (!res.ok) {
+    // 安装器 ExecWait 会等待此进程退出；即使部分失败也返回 0 让安装继续，
+    // 失败细节已通过日志与控制中心可见，避免安装被判失败。
+    console.warn('[OfficeAI:integrate] 部分集成未完成，请在控制中心查看详情后重试一键安装。');
+  }
 }
 
 function resolveAssetsDir(): string {
@@ -200,21 +205,33 @@ function createTray(): void {
   tray.on('double-click', () => void createMainWindow('/dashboard'));
 }
 
-const singleLock = app.requestSingleInstanceLock();
+// --integrate 为 NSIS 安装器的无头调用：必须在 singleInstance 锁之前处理，
+// 且不与正常桌面进程互斥（幂等，可与已运行实例并行）。直接用 process 退出，
+// 不走 Electron 窗口/托盘生命周期，避免“闪退”与单例抢占。
 if (integrateRequested) {
-  // 安装程序调用：无头执行全量集成后退出（不弹窗口、不启动网关服务）。
-  // 即使已有实例在运行也照常执行（全部幂等），不占用单例。
+  // 完全绕过 Electron 单例与窗口初始化
   runHeadlessIntegration()
-    .then(() => process.exit(0))
+    .then(() => {
+      // 确保日志落盘后再退出；用 app.exit 而非 process.exit 以便 Electron 清理
+      try {
+        if (app.isReady()) app.quit();
+      } catch {}
+      setTimeout(() => process.exit(0), 300);
+    })
     .catch((err) => {
       console.error('[OfficeAI:integrate] 集成失败:', err);
-      process.exit(1);
+      try {
+        if (app.isReady()) app.quit();
+      } catch {}
+      setTimeout(() => process.exit(1), 300);
     });
-} else if (!singleLock) {
-  // A gateway is already running: let the existing instance handle the deep
-  // link (e.g. WPS asked to start the assistant while it is already up).
-  app.quit();
 } else {
+  const singleLock = app.requestSingleInstanceLock();
+  if (!singleLock) {
+    // A gateway is already running: let the existing instance handle the deep
+    // link (e.g. WPS asked to start the assistant while it is already up).
+    app.quit();
+  } else {
   app.on('second-instance', (_event, argv) => {
     const { deepLink } = resolveLaunchArguments(argv);
     if (deepLink) {
@@ -254,32 +271,33 @@ if (integrateRequested) {
         console.log(`[OfficeAI] 端口不同，期望 ${target}，实际 ${gateway.httpUrl}`);
       }
 
-      // 兜底：若唤醒器未安装或证书未信任（例如安装程序的集成步骤被跳过/失败，
-      // 或从旧版本升级），首次启动时自动补做全量集成。全部幂等，失败不影响启动。
-      try {
-        const status = await gateway.integrator.getStatus();
-        if (!status.waker?.installed || !status.certTrusted) {
-          const res = await gateway.integrator.installAll();
-          console.log(`[OfficeAI] 启动时自动集成：ok=${res.ok} ${res.message}`);
-        }
-      } catch (err) {
-        console.warn('[OfficeAI] 启动时自动集成跳过:', err);
-      }
-
       createTray();
 
       const mode = gateway.store.getConfig().settings.launchMode;
+      // 展示窗口：桌面启动应保持可见，避免“闪退”。只有由加载项唤起时才隐藏到托盘。
       if (launcher === 'addin') {
-        // Started from WPS: stay invisible, user is waiting inside WPS
-        hideToTray();
-      } else if (mode === 'on-demand') {
-        await createMainWindow('/dashboard');
+        // Started from WPS/Office: stay invisible, user is waiting inside Office
         hideToTray();
       } else if (mode === 'manual') {
         hideToTray();
       } else {
         await createMainWindow('/dashboard');
       }
+
+      // 兜底集成改为后台异步，不阻塞窗口/托盘的展示，避免首次启动长时间白屏或“闪退”感。
+      // 若唤醒器未安装或证书未信任（例如 NSIS 的 --integrate 被跳过/失败，或旧版升级），自动补做。
+      void (async () => {
+        try {
+          const status = await gateway!.integrator.getStatus();
+          if (!status.waker?.installed || !status.certTrusted) {
+            const res = await gateway!.integrator.installAll();
+            console.log(`[OfficeAI] 启动时后台自动集成：ok=${res.ok} ${res.message}`);
+            res.details?.forEach((d: string) => console.log(`  - ${d}`));
+          }
+        } catch (err) {
+          console.warn('[OfficeAI] 启动时后台自动集成跳过:', err);
+        }
+      })();
     } catch (err) {
       dialog.showErrorBox(
         'OfficeAI 启动失败',
@@ -305,4 +323,5 @@ if (integrateRequested) {
       app.quit();
     }
   });
+  }
 }
