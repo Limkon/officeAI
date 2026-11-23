@@ -109,7 +109,8 @@ export class WindowsOfficeIntegrator {
       return {
         ok: true,
         message:
-          '后台监听器安装成功！它会常驻（约 10MB），在 Word/Excel/PPT/WPS 启动时自动拉起网关；Office 启动路径零开销。',
+          '后台监听器安装成功，但请注意：它会注册「登录时自启」的计划任务并常驻约 10MB。' +
+          '如果不想开机就运行任何进程，请卸载它并改用「Office 唤醒器」（默认方式）。',
         details: [stdout.trim(), stderr.trim()].filter(Boolean)
       };
     } catch (err) {

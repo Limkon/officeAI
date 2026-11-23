@@ -358,7 +358,7 @@ export function createDefaultConfig(): AppConfig {
       exitWithOffice: true,
       idleExitMinutes: 10,
       sessionGraceMinutes: 2,
-      launchTrigger: 'watcher'
+      launchTrigger: 'waker'
     },
     providers: createDefaultProviders(),
     prompts: [...DEFAULT_PROMPT_ACTIONS]

@@ -38,26 +38,60 @@ namespace OfficeAI
         private static readonly object Gate = new object();
         private static bool _launched;
 
+        /// <summary>
+        /// 关键：OnConnection 里**什么都不做**，直接返回。
+        /// 此时 Office 还在启动中（splash 阶段），任何 I/O 都会计入加载项耗时，
+        /// 累计超过阈值就会被 Office 判定为“慢加载项”自动禁用。
+        /// 真正的探活/启动放到 OnStartupComplete（界面已就绪）之后。
+        /// </summary>
         public void OnConnection(object Application, ext_ConnectMode ConnectMode, object AddInInst, ref Array custom)
         {
-            try
-            {
-                LaunchIfNeeded();
-            }
-            catch (Exception ex)
-            {
-                Log("OnConnection failed: " + ex.Message);
-            }
+            // intentionally empty
         }
 
         public void OnDisconnection(ext_DisconnectMode RemoveMode, ref Array custom) { }
         public void OnAddInsUpdate(ref Array custom) { }
-        public void OnStartupComplete(ref Array custom) { }
+        public void OnStartupComplete(ref Array custom)
+        {
+            StartWatchdog();
+        }
         public void OnBeginShutdown(ref Array custom) { }
 
         /// <summary>
-        /// 探活 → 需要时拉起 Start-OfficeAI.bat。**同步调用，立即返回**：
-        /// 绝不能在 OnConnection 里长时间等待，否则 Office 会判定加载项拖慢启动。
+        /// 在后台线程上探活并按需启动：Office 主线程立刻返回，绝不等待网络。
+        /// 1.5 秒延迟让 Office 先把界面画完；随后每 5 秒补探一次，
+        /// 覆盖“网关刚被关掉、用户继续用 Office”的场景（最多 12 次，约 1 分钟）。
+        /// </summary>
+        private static void StartWatchdog()
+        {
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    Thread.Sleep(1500);
+                    for (int attempt = 0; attempt < 12; attempt++)
+                    {
+                        if (IsGatewayAlive())
+                        {
+                            return;
+                        }
+                        LaunchIfNeeded();
+                        Thread.Sleep(5000);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log("watchdog failed: " + ex.Message);
+                }
+            });
+
+            thread.IsBackground = true; // 不阻止 Office 退出
+            thread.Name = "OfficeAI.Waker.Watchdog";
+            thread.Start();
+        }
+
+        /// <summary>
+        /// 探活 → 需要时拉起 Start-OfficeAI.bat（由后台线程调用，阻塞无所谓）。
         /// </summary>
         private static void LaunchIfNeeded()
         {
@@ -228,6 +262,23 @@ namespace OfficeAI
 
         private static void Log(string message)
         {
+            try
+            {
+                // 简单滚动，避免日志无限增长
+                string logPath = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "OfficeAI",
+                    LogName);
+                if (System.IO.File.Exists(logPath) && new System.IO.FileInfo(logPath).Length > 128 * 1024)
+                {
+                    System.IO.File.Delete(logPath);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
             try
             {
                 string dir = Path.Combine(

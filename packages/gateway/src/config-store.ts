@@ -53,7 +53,7 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
   const grace = Number(next.sessionGraceMinutes);
   next.sessionGraceMinutes = Number.isFinite(grace) ? Math.min(30, Math.max(1, Math.round(grace))) : 2;
   if (next.launchTrigger !== 'watcher' && next.launchTrigger !== 'waker') {
-    next.launchTrigger = 'watcher';
+    next.launchTrigger = 'waker';
   }
 
   return next;

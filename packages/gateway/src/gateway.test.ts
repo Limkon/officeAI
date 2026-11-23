@@ -267,7 +267,7 @@ test('On-demand launch: settings normalize, start page & office status are serve
       body: JSON.stringify({ launchTrigger: 'nonsense' })
     });
     const badJson = (await badTrigger.json()) as { settings: { launchTrigger: string } };
-    assert.equal(badJson.settings.launchTrigger, 'watcher');
+    assert.equal(badJson.settings.launchTrigger, 'waker');
 
     // The launcher page is what WPS/Office users see when the gateway is down
     const startRes = await fetch(`${gw.httpUrl}/start`);
