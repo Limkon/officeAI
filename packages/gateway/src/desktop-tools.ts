@@ -16,13 +16,7 @@ export interface LaunchTarget {
   command: string;
   kind: LaunchTargetKind;
   /** Where the target came from, for diagnostics in the dashboard */
-  source:
-    | 'custom'
-    | 'env'
-    | 'portable-exe'
-    | 'installed-exe'
-    | 'dev-script'
-    | 'none';
+  source: 'custom' | 'env' | 'installed-exe' | 'none';
 }
 
 function firstExisting(candidates: Array<{ file: string; source: LaunchTarget['source'] }>): LaunchTarget | null {
@@ -75,21 +69,15 @@ export function resolveLaunchTarget(options: {
   const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
   const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-  const nodeDir = path.dirname(process.execPath);
-  const repoRoot = path.resolve(__dirname, '..', '..', '..');
-
   const found = firstExisting([
-    // Portable / source checkout: node.exe next to Start-OfficeAI.bat
-    { file: path.join(nodeDir, 'Start-OfficeAI.bat'), source: 'dev-script' },
-    { file: path.join(repoRoot, 'scripts', 'windows', 'Start-OfficeAI.bat'), source: 'dev-script' },
-    // Electron builds
+    // Running inside the packaged desktop app: process.execPath is OfficeAI.exe
+    {
+      file: process.execPath.toLowerCase().endsWith('officeai.exe') ? process.execPath : '',
+      source: 'installed-exe'
+    },
     { file: path.join(localAppData, 'Programs', 'OfficeAI', 'OfficeAI.exe'), source: 'installed-exe' },
     { file: path.join(programFiles, 'OfficeAI', 'OfficeAI.exe'), source: 'installed-exe' },
-    { file: path.join(programFilesX86, 'OfficeAI', 'OfficeAI.exe'), source: 'installed-exe' },
-    // Portable Electron exe
-    { file: path.join(nodeDir, 'OfficeAI.exe'), source: 'portable-exe' },
-    // Running inside the packaged desktop app: process.execPath is OfficeAI.exe
-    { file: process.execPath.toLowerCase().endsWith('officeai.exe') ? process.execPath : '', source: 'portable-exe' }
+    { file: path.join(programFilesX86, 'OfficeAI', 'OfficeAI.exe'), source: 'installed-exe' }
   ]);
 
   return found ?? { command: '', kind: 'none', source: 'none' };

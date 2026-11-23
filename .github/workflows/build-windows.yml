@@ -1,4 +1,4 @@
-name: Build Windows Installer & Portable
+name: Build Windows Installer
 
 on:
   push:
@@ -37,46 +37,26 @@ jobs:
         shell: pwsh
         run: ./windows/waker/install-waker.ps1 -Action Install -Build
 
-      # 可选组件：仅在用户显式选择「后台监听器」时才需要。
-      # 默认路径（唤醒器）已在上一步验证编译；这里只做尽力而为的编译，
-      # 失败不阻塞发布，脚本会打印 csc 的原始错误供排查。
-      - name: Build Office watcher (optional, best effort)
-        shell: pwsh
-        continue-on-error: true
-        run: ./windows/waker/install-watcher.ps1 -Action Status -Build
-
+      # 安装包会把 build/OfficeAI.Waker.dll 打进 resources/assets/waker，
+      # 缺失会导致 electron-builder 打包失败，所以这里先硬性校验。
       - name: Verify waker DLL built
         shell: pwsh
         run: |
-          if (-not (Test-Path ./windows/waker/build/OfficeAI.Waker.dll)) { throw 'OfficeAI.Waker.dll 未生成' }
-          New-Item -ItemType Directory -Force -Path ./release/waker | Out-Null
-          Copy-Item ./windows/waker/build/OfficeAI.Waker.dll ./release/waker/OfficeAI.Waker.dll -Force
-          if (Test-Path ./windows/waker/build/OfficeAI.Watcher.exe) {
-            Copy-Item ./windows/waker/build/OfficeAI.Watcher.exe ./release/waker/OfficeAI.Watcher.exe -Force
-            Write-Host 'watcher: 已编译'
-          } else {
-            Write-Warning 'watcher: 未编译（可选组件，用户可用 install-watcher.ps1 -Build 现场编译）'
-          }
-          Get-ChildItem ./release/waker | Select-Object Name, Length
+          $dll = './windows/waker/build/OfficeAI.Waker.dll'
+          if (-not (Test-Path $dll)) { throw 'OfficeAI.Waker.dll 未生成' }
+          Get-Item $dll | Select-Object Name, Length
 
-      - name: Unregister waker/watcher (CI is a throwaway runner)
+      - name: Unregister waker (CI is a throwaway runner)
         shell: pwsh
         continue-on-error: true
-        run: |
-          ./windows/waker/install-waker.ps1 -Action Uninstall
-          ./windows/waker/install-watcher.ps1 -Action Uninstall
+        run: ./windows/waker/install-waker.ps1 -Action Uninstall
 
-      - name: Build Windows Portable ZIP (includes waker)
-        run: npm run package:portable
-
-      - name: Build Electron Windows NSIS Installer & Portable EXE
+      - name: Build Windows installer (NSIS)
         run: npm run dist:win --workspace=@officeai/desktop-app
 
-      - name: Upload Windows build artifacts
+      - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: OfficeAI-Windows-Release
-          path: |
-            release/*.exe
-            release/*.zip
+          name: OfficeAI-Windows-Setup
+          path: release/OfficeAI-Setup-*.exe
           if-no-files-found: error

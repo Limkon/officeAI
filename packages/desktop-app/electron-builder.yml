@@ -17,6 +17,11 @@ extraResources:
     to: assets/office-addin
   - from: ../wps-addin
     to: assets/wps-addin
+  # Office 唤醒器随安装包一起分发：安装后由控制中心一键注册。
+  - from: ../../windows/waker/install-waker.ps1
+    to: assets/waker/install-waker.ps1
+  - from: ../../windows/waker/build/OfficeAI.Waker.dll
+    to: assets/waker/OfficeAI.Waker.dll
 protocols:
   - name: OfficeAI 一键启动
     schemes:
@@ -27,14 +32,10 @@ win:
     - target: nsis
       arch:
         - x64
-    - target: portable
-      arch:
-        - x64
 nsis:
+  artifactName: OfficeAI-Setup-${version}-win-x64.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: OfficeAI
-portable:
-  artifactName: OfficeAI-Portable-${version}-win-x64.exe

@@ -1,19 +1,23 @@
 @echo off
 chcp 65001 >nul
-title OfficeAI 本地服务（按需启动）
+title OfficeAI 启动
 setlocal
-set ROOT_DIR=%~dp0
-if exist "%ROOT_DIR%gateway\cli.js" (
-  set CLI_PATH=%ROOT_DIR%gateway\cli.js
-  set OFFICEAI_ASSETS_DIR=%ROOT_DIR%assets
-) else (
-  set CLI_PATH=%ROOT_DIR%..\..\packages\gateway\dist\cli.js
+rem 手动 / 排障入口：直接启动已安装的 OfficeAI（不注册任何自启项）。
+rem 平时无需运行本脚本——打开 Word / Excel / PPT / WPS 时会自动启动。
+
+set "EXE=%LOCALAPPDATA%\Programs\OfficeAI\OfficeAI.exe"
+if not exist "%EXE%" set "EXE=%ProgramFiles%\OfficeAI\OfficeAI.exe"
+if not exist "%EXE%" set "EXE=%ProgramFiles(x86)%\OfficeAI\OfficeAI.exe"
+if not exist "%EXE%" set "EXE=%~dp0OfficeAI.exe"
+
+if not exist "%EXE%" (
+  echo 未找到 OfficeAI.exe，请先运行 OfficeAI Setup 安装包。
+  pause
+  exit /b 1
 )
 
-rem --launched-by 只用于日志/诊断：记录是谁按需拉起了网关
 if "%~1"=="" (
-  node "%CLI_PATH%" --launched-by manual
+  start "" "%EXE%" --launched-by manual
 ) else (
-  node "%CLI_PATH%" --launched-by manual --launch "%~1"
+  start "" "%EXE%" --launched-by manual --launch "%~1"
 )
-pause

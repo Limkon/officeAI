@@ -64,9 +64,7 @@ async function main() {
     'install-wps',
     'install-office',
     'install-waker',
-    'install-watcher',
     'uninstall-waker',
-    'uninstall-watcher',
     'install-all',
     'status',
     'install-protocol',
@@ -105,7 +103,7 @@ async function main() {
 
       if (!exe) {
         console.log(
-          '[Protocol] 未找到 OfficeAI.exe，只能注册 officeai:// 协议到 Start-OfficeAI.bat 所在目录。\n' +
+          '[Protocol] 未找到 OfficeAI.exe，无法注册 officeai:// 协议。\n' +
             '  请在配置中心「启动方式」中填写 OfficeAI.exe 的完整路径后重试。'
         );
         return;
@@ -132,29 +130,10 @@ async function main() {
       return;
     }
 
-    if (cmd === 'uninstall-watcher') {
-      const res = await integrator.uninstallOfficeWatcher();
-      console.log('[Watcher]', res.message);
-      return;
-    }
-
-    // 只有在 launchTrigger = watcher 时才装监听器；waker 模式走 COM 加载项
+    // Office 侧的唯一自动启动方式：COM 唤醒器（登录时不运行任何进程）
     if (cmd === 'install-waker' || cmd === 'install-all') {
-      const trigger = store.getConfig().settings.launchTrigger;
-      if (cmd === 'install-all' && trigger === 'watcher') {
-        const res = await integrator.installOfficeWatcher();
-        console.log('[Watcher]', res.message);
-        res.details?.forEach((d) => console.log('  -', d));
-      } else {
-        const res = await integrator.installOfficeWaker();
-        console.log('[Waker]', res.message);
-        res.details?.forEach((d) => console.log('  -', d));
-      }
-    }
-
-    if (cmd === 'install-watcher') {
-      const res = await integrator.installOfficeWatcher();
-      console.log('[Watcher]', res.message);
+      const res = await integrator.installOfficeWaker();
+      console.log('[Waker]', res.message);
       res.details?.forEach((d) => console.log('  -', d));
     }
 

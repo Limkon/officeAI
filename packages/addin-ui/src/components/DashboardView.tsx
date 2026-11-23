@@ -93,9 +93,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [sessionGraceMinutes, setSessionGraceMinutes] = useState(
     config.settings.sessionGraceMinutes ?? 2
   );
-  const [launchTrigger, setLaunchTrigger] = useState<'watcher' | 'waker'>(
-    config.settings.launchTrigger ?? 'waker'
-  );
   const [savingLaunch, setSavingLaunch] = useState(false);
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
 
@@ -229,14 +226,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setExitWithOffice(config.settings.exitWithOffice !== false);
     setIdleExitMinutes(config.settings.idleExitMinutes ?? 10);
     setSessionGraceMinutes(config.settings.sessionGraceMinutes ?? 2);
-    setLaunchTrigger(config.settings.launchTrigger ?? 'waker');
   }, [
     config.settings.launchMode,
     config.settings.gatewayLaunchCommand,
     config.settings.exitWithOffice,
     config.settings.idleExitMinutes,
-    config.settings.sessionGraceMinutes,
-    config.settings.launchTrigger
+    config.settings.sessionGraceMinutes
   ]);
 
   const handleSaveLaunchSettings = async () => {
@@ -249,8 +244,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         gatewayLaunchCommand: gatewayLaunchCommand.trim(),
         exitWithOffice,
         idleExitMinutes,
-        sessionGraceMinutes,
-        launchTrigger
+        sessionGraceMinutes
       });
       await onRefreshConfig();
       setLaunchMsg('启动方式已保存');
@@ -1012,7 +1006,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    启动命令（留空自动探测 OfficeAI.exe / Start-OfficeAI.bat）
+                    启动命令（留空自动探测 OfficeAI.exe）
                   </label>
                   <input
                     type="text"
@@ -1096,29 +1090,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-xs text-slate-700 space-y-3">
-                <div className="font-semibold text-slate-900">由谁负责「打开办公软件就启动」</div>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                  <label
-                    className={`cursor-pointer rounded-lg border p-2.5 ${
-                      launchTrigger === 'waker' ? 'border-indigo-500 bg-white' : 'border-slate-200 bg-white/60'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="launchTrigger"
-                      className="mr-2"
-                      checked={launchTrigger === 'waker'}
-                      onChange={() => setLaunchTrigger('waker')}
-                    />
-                    <span className="font-semibold">Office 唤醒器（推荐 · 不开机自启）</span>
-                    <p className="mt-1 leading-relaxed text-slate-600">
-                      极小的 COM 加载项。登录时**不运行任何进程**；只有打开 Word/Excel/PPT 时，
-                      由 Office 在后台线程探活并拉起网关。探活放在 OnStartupComplete 之后，
-                      Office 启动路径零等待。
-                    </p>
-                    <div className="mt-2 flex items-center gap-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      Office 唤醒器（唯一自动启动方式 · 不开机自启）
                       <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] ${
+                        className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${
                           winStatus?.waker?.installed
                             ? 'bg-emerald-100 text-emerald-700'
                             : 'bg-slate-200 text-slate-600'
@@ -1126,84 +1103,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       >
                         {winStatus?.waker?.installed ? '已安装' : '未安装'}
                       </span>
-                      <button
-                        type="button"
-                        disabled={winBusy}
-                        onClick={() =>
-                          void handleWinAction(() =>
-                            winStatus?.waker?.installed
-                              ? apiClient.uninstallWaker()
-                              : apiClient.installWaker()
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        {winStatus?.waker?.installed ? '卸载唤醒器' : '安装唤醒器'}
-                      </button>
                     </div>
-                    {winStatus?.waker?.installed && (
-                      <div className="mt-1 text-[10px] text-slate-500">
-                        LoadBehavior:{' '}
-                        {Object.entries(winStatus.waker.loadBehavior)
-                          .map(([app, v]) => `${app}=${v ?? '未注册'}`)
-                          .join(' · ')}
-                      </div>
-                    )}
-                  </label>
-                  <label
-                    className={`cursor-pointer rounded-lg border p-2.5 ${
-                      launchTrigger === 'watcher'
-                        ? 'border-indigo-500 bg-white'
-                        : 'border-slate-200 bg-white/60'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="launchTrigger"
-                      className="mr-2"
-                      checked={launchTrigger === 'watcher'}
-                      onChange={() => setLaunchTrigger('watcher')}
-                    />
-                    <span className="font-semibold text-amber-700">后台监听器（会登录自启 + 常驻）</span>
                     <p className="mt-1 leading-relaxed text-slate-600">
-                      常驻约 10MB，<strong>登录时即启动</strong>，每 2 秒检查进程列表。
-                      仅在“不介意开机有后台进程”时使用；否则请选左侧唤醒器。
+                      极小的 COM 加载项（约 60KB）。登录时<strong>不运行任何 OfficeAI 进程</strong>；
+                      打开 Word / Excel / PowerPoint 时由 Office 加载，在后台线程探活并拉起网关
+                      （探活放在 OnStartupComplete 之后，Office 启动路径零等待）。
+                      所有办公窗口关闭后网关自动退出。
                     </p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] ${
-                          winStatus?.watcher?.installed
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-slate-200 text-slate-600'
-                        }`}
-                      >
-                        {winStatus?.watcher?.installed
-                          ? winStatus.watcher?.running
-                            ? `运行中 · ${winStatus.watcher.memoryMB ?? '?'}MB`
-                            : '已注册未运行'
-                          : '未安装'}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={winBusy}
-                        onClick={() =>
-                          void handleWinAction(() =>
-                            winStatus?.watcher?.installed
-                              ? apiClient.uninstallWatcher()
-                              : apiClient.installWatcher()
-                          )
-                        }
-                        className="rounded-lg border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        {winStatus?.watcher?.installed ? '卸载监听器' : '安装监听器'}
-                      </button>
-                    </div>
-                  </label>
-
+                  </div>
+                  <button
+                    type="button"
+                    disabled={winBusy}
+                    onClick={() =>
+                      void handleWinAction(() =>
+                        winStatus?.waker?.installed
+                          ? apiClient.uninstallWaker()
+                          : apiClient.installWaker()
+                      )
+                    }
+                    className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {winStatus?.waker?.installed ? '卸载唤醒器' : '安装唤醒器'}
+                  </button>
                 </div>
+                {winStatus?.waker?.installed && (
+                  <div className="text-[10px] text-slate-500">
+                    LoadBehavior:{' '}
+                    {Object.entries(winStatus.waker.loadBehavior)
+                      .map(([app, v]) => `${app}=${v ?? '未注册'}`)
+                      .join(' · ')}
+                  </div>
+                )}
                 <p className="text-[11px] text-slate-500">
-                  只安装与所选方式对应的组件；切换后请点「保存启动方式」并重新安装一次，卸载掉另一种方式。
-                  默认的唤醒器模式<strong>不会注册任何开机/登录自启项</strong>。
+                  本方式<strong>不会注册任何开机 / 登录自启项</strong>（无 Run 项、无启动文件夹、无计划任务）。
+                  若唤醒器不可用，可用桌面「OfficeAI 启动」快捷方式手动拉起。
                 </p>
               </div>
 

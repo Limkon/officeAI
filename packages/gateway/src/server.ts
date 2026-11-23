@@ -169,7 +169,7 @@ function renderLauncherPage(options: {
     <button id="start">一键启动 OfficeAI</button>
     <button class="secondary" id="retry">我已启动，重新连接</button>
     <p style="margin-top:14px">如果按钮没有反应，请手动双击开始菜单中的「OfficeAI 启动」，或在命令行执行：</p>
-    <code>${escapeHtml(launchCommand || 'Start-OfficeAI.bat')}</code>
+    <code>${escapeHtml(launchCommand || 'OfficeAI.exe')}</code>
     <div class="state" id="state"></div>
   </div>
 </div>
@@ -759,18 +759,6 @@ export async function startGateway(options?: GatewayOptions): Promise<RunningGat
 
       if (pathname === '/api/windows/uninstall-waker' && req.method === 'POST') {
         const result = await integrator.uninstallOfficeWaker();
-        sendJson(res, 200, result);
-        return;
-      }
-
-      if (pathname === '/api/windows/install-watcher' && req.method === 'POST') {
-        const result = await integrator.installOfficeWatcher();
-        sendJson(res, 200, result);
-        return;
-      }
-
-      if (pathname === '/api/windows/uninstall-watcher' && req.method === 'POST') {
-        const result = await integrator.uninstallOfficeWatcher();
         sendJson(res, 200, result);
         return;
       }

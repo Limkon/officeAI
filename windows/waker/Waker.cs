@@ -91,7 +91,7 @@ namespace OfficeAI
         }
 
         /// <summary>
-        /// 探活 → 需要时拉起 Start-OfficeAI.bat（由后台线程调用，阻塞无所谓）。
+        /// 探活 → 需要时拉起 OfficeAI.exe（由后台线程调用，阻塞无所谓）。
         /// </summary>
         private static void LaunchIfNeeded()
         {
@@ -116,30 +116,16 @@ namespace OfficeAI
 
             try
             {
-                if (launcher.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+                // 只支持已安装的 OfficeAI.exe（安装版是唯一分发形态）
+                var psi = new ProcessStartInfo
                 {
-                    // 用 cmd /c start /min 启动，避免弹出黑窗口
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = "/c start \"OfficeAI\" /min \"" + launcher + "\" --launched-by office",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        WorkingDirectory = Path.GetDirectoryName(launcher) ?? Environment.CurrentDirectory
-                    };
-                    Process.Start(psi);
-                }
-                else
-                {
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = launcher,
-                        Arguments = "--launched-by office",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    Process.Start(psi);
-                }
+                    FileName = launcher,
+                    Arguments = "--launched-by office",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = Path.GetDirectoryName(launcher) ?? Environment.CurrentDirectory
+                };
+                Process.Start(psi);
                 Log("launched: " + launcher);
             }
             catch (Exception ex)
@@ -170,11 +156,11 @@ namespace OfficeAI
 
         /// <summary>
         /// 查找启动程序，顺序与网关的 resolveLaunchTarget 保持一致：
-        /// 注册表配置 → 环境变量 → OfficeAI.exe 常见安装位置 → Start-OfficeAI.bat
+        /// config.json 自定义命令 → 环境变量 → OfficeAI.exe 常见安装位置
         /// </summary>
         private static string ResolveLauncher()
         {
-            string fromRegistry = ReadRegistryConfig("gatewayLaunchCommand");
+            string fromRegistry = ReadLaunchCommandFromConfig("gatewayLaunchCommand");
             if (!string.IsNullOrEmpty(fromRegistry) && File.Exists(fromRegistry))
             {
                 return fromRegistry;
@@ -189,11 +175,11 @@ namespace OfficeAI
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string[] candidates =
             {
+                // NSIS 默认按当前用户安装到这里
                 Path.Combine(localAppData, "Programs", "OfficeAI", "OfficeAI.exe"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "OfficeAI", "OfficeAI.exe"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OfficeAI.exe"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Start-OfficeAI.bat"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "Start-OfficeAI.bat")
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "OfficeAI", "OfficeAI.exe"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OfficeAI.exe")
             };
 
             foreach (string candidate in candidates)
@@ -214,8 +200,8 @@ namespace OfficeAI
             return null;
         }
 
-        /// <summary>读取网关写入的 config.json 中的 gatewayLaunchCommand</summary>
-        private static string ReadRegistryConfig(string key)
+        /// <summary>读取网关写入的 %APPDATA%\OfficeAI\config.json 中的 gatewayLaunchCommand</summary>
+        private static string ReadLaunchCommandFromConfig(string key)
         {
             try
             {
