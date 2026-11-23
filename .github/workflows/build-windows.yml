@@ -1,0 +1,49 @@
+name: Build Windows Installer & Portable
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - 'arena/**'
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build all packages
+        run: npm run build
+
+      - name: Run unit & gateway integration tests
+        run: npm test
+
+      - name: Build Windows Portable ZIP
+        run: npm run package:portable
+
+      - name: Build Electron Windows NSIS Installer & Portable EXE
+        run: npm run dist:win --workspace=@officeai/desktop-app
+
+      - name: Upload Windows build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OfficeAI-Windows-Release
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error

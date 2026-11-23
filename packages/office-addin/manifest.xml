@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+  xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+  xsi:type="TaskPaneApp">
+
+  <Id>b8d4c3e2-71a0-4f88-9c3d-0f1ce2026a00</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>OfficeAI</ProviderName>
+  <DefaultLocale>zh-CN</DefaultLocale>
+  <DisplayName DefaultValue="OfficeAI 智能助手"/>
+  <Description DefaultValue="将 OpenAI、Claude、Gemini、DeepSeek、通义千问、智谱GLM、Kimi 及 Ollama/LM Studio 本地模型接入 Word、Excel、PowerPoint。"/>
+  <IconUrl DefaultValue="https://127.0.0.1:18443/office/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://127.0.0.1:18443/office/assets/icon-80.png"/>
+  <SupportUrl DefaultValue="https://127.0.0.1:18443/dashboard"/>
+
+  <AppDomains>
+    <AppDomain>https://127.0.0.1:18443</AppDomain>
+    <AppDomain>http://127.0.0.1:18080</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Document"/>
+    <Host Name="Workbook"/>
+    <Host Name="Presentation"/>
+  </Hosts>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://127.0.0.1:18443/?host=office"/>
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Document">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="Support.Url"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="OfficeAI.Word.Group">
+                <Label resid="Group.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16"/>
+                  <bt:Image size="32" resid="Icon.32"/>
+                  <bt:Image size="80" resid="Icon.80"/>
+                </Icon>
+                <Control xsi:type="Button" id="OfficeAI.Word.OpenTaskPane">
+                  <Label resid="OpenTaskPane.Label"/>
+                  <Supertip>
+                    <Title resid="OpenTaskPane.Label"/>
+                    <Description resid="OpenTaskPane.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16"/>
+                    <bt:Image size="32" resid="Icon.32"/>
+                    <bt:Image size="80" resid="Icon.80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>OfficeAI.TaskPane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+
+      <Host xsi:type="Workbook">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="Support.Url"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="OfficeAI.Excel.Group">
+                <Label resid="Group.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16"/>
+                  <bt:Image size="32" resid="Icon.32"/>
+                  <bt:Image size="80" resid="Icon.80"/>
+                </Icon>
+                <Control xsi:type="Button" id="OfficeAI.Excel.OpenTaskPane">
+                  <Label resid="OpenTaskPane.Label"/>
+                  <Supertip>
+                    <Title resid="OpenTaskPane.Label"/>
+                    <Description resid="OpenTaskPane.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16"/>
+                    <bt:Image size="32" resid="Icon.32"/>
+                    <bt:Image size="80" resid="Icon.80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>OfficeAI.TaskPane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+
+      <Host xsi:type="Presentation">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="GetStarted.Title"/>
+            <Description resid="GetStarted.Description"/>
+            <LearnMoreUrl resid="Support.Url"/>
+          </GetStarted>
+          <FunctionFile resid="Commands.Url"/>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="OfficeAI.PPT.Group">
+                <Label resid="Group.Label"/>
+                <Icon>
+                  <bt:Image size="16" resid="Icon.16"/>
+                  <bt:Image size="32" resid="Icon.32"/>
+                  <bt:Image size="80" resid="Icon.80"/>
+                </Icon>
+                <Control xsi:type="Button" id="OfficeAI.PPT.OpenTaskPane">
+                  <Label resid="OpenTaskPane.Label"/>
+                  <Supertip>
+                    <Title resid="OpenTaskPane.Label"/>
+                    <Description resid="OpenTaskPane.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16"/>
+                    <bt:Image size="32" resid="Icon.32"/>
+                    <bt:Image size="80" resid="Icon.80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>OfficeAI.TaskPane</TaskpaneId>
+                    <SourceLocation resid="Taskpane.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Icon.16" DefaultValue="https://127.0.0.1:18443/office/assets/icon-16.png"/>
+        <bt:Image id="Icon.32" DefaultValue="https://127.0.0.1:18443/office/assets/icon-32.png"/>
+        <bt:Image id="Icon.80" DefaultValue="https://127.0.0.1:18443/office/assets/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://127.0.0.1:18443/dashboard"/>
+        <bt:Url id="Support.Url" DefaultValue="https://127.0.0.1:18443/dashboard"/>
+        <bt:Url id="Commands.Url" DefaultValue="https://127.0.0.1:18443/office/commands.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://127.0.0.1:18443/?host=office"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="GetStarted.Title" DefaultValue="OfficeAI 已就绪"/>
+        <bt:String id="Group.Label" DefaultValue="OfficeAI"/>
+        <bt:String id="OpenTaskPane.Label" DefaultValue="AI 助手"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="GetStarted.Description" DefaultValue="点击「AI 助手」打开侧边栏，即可使用各大云端大模型及本地 Ollama/LM Studio 模型。"/>
+        <bt:String id="OpenTaskPane.Tooltip" DefaultValue="打开 OfficeAI 智能侧边栏（支持润色、翻译、公式生成、PPT大纲等）。"/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>

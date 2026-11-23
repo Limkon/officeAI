@@ -1,0 +1,23 @@
+{
+  "name": "@officeai/gateway",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "officeai-gateway": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "node --watch dist/cli.js",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@officeai/shared": "*",
+    "selfsigned": "^2.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

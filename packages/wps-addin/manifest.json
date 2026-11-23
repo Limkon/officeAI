@@ -1,0 +1,8 @@
+{
+  "name": "officeai",
+  "version": "1.0.0",
+  "description": "OfficeAI - 将主流大模型 API 与 Ollama/LM Studio 本地模型接入 WPS Office",
+  "ribbon": "ribbon.xml",
+  "main": "index.html",
+  "hosts": ["wps", "et", "wpp"]
+}
