@@ -90,9 +90,10 @@ test('buildGatewayLaunchUrl / parseGatewayLaunchUrl round-trip loopback only', (
   assert.equal(parseGatewayLaunchUrl('officeai://activate/not-a-url'), undefined);
 });
 
-test('createDefaultConfig defaults to on-demand launch (no autostart)', () => {
+test('createDefaultConfig defaults to always launch (prevent blank panel after auto-exit)', () => {
   const cfg = createDefaultConfig();
-  assert.equal(cfg.settings.launchMode, 'on-demand');
-  assert.equal(cfg.settings.autoStartGateway, false);
-  assert.equal(cfg.settings.exitWithOffice, true);
+  assert.equal(cfg.settings.launchMode, 'always');
+  assert.equal(cfg.settings.autoStartGateway, true);
+  assert.equal(cfg.settings.exitWithOffice, false);
+  assert.equal(cfg.settings.idleExitMinutes, 0);
 });

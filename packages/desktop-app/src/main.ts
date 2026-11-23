@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from 'electron';
+import { app } from 'electron';
 import { parseGatewayLaunchUrl } from '@officeai/shared';
 import {
   ConfigStore,
@@ -12,8 +12,6 @@ import {
   type RunningGateway
 } from '@officeai/gateway';
 
-let mainWindow: BrowserWindow | null = null;
-let tray: Tray | null = null;
 let gateway: RunningGateway | null = null;
 let isQuitting = false;
 let gatewayExitReason: string | null = null;
@@ -60,9 +58,7 @@ async function runHeadlessIntegration(): Promise<void> {
   console.log(`[OfficeAI:integrate] ok=${res.ok} ${res.message}`);
   res.details?.forEach((d: string) => console.log(`  - ${d}`));
   if (!res.ok) {
-    // 安装器 ExecWait 会等待此进程退出；即使部分失败也返回 0 让安装继续，
-    // 失败细节已通过日志与控制中心可见，避免安装被判失败。
-    console.warn('[OfficeAI:integrate] 部分集成未完成，请在控制中心查看详情后重试一键安装。');
+    console.warn('[OfficeAI:integrate] 部分集成未完成，请在Office面板的设置中查看详情后重试一键安装。');
   }
 }
 
@@ -75,144 +71,12 @@ function resolveAssetsDir(): string {
   return path.resolve(__dirname, '..', '..');
 }
 
-function resolveTrayIcon(): Electron.NativeImage {
-  const candidates = [
-    path.join(__dirname, '..', 'assets', 'icon-32.png'),
-    path.join(process.resourcesPath || '', 'assets', 'wps-addin', 'assets', 'icon-32.png')
-  ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) {
-      return nativeImage.createFromPath(p);
-    }
-  }
-  return nativeImage.createEmpty();
-}
-
-async function createMainWindow(urlPath = '/dashboard'): Promise<void> {
-  if (!gateway) return;
-  const targetUrl = `${gateway.httpUrl}${urlPath}`;
-
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
-    await mainWindow.loadURL(targetUrl);
-    return;
-  }
-
-  mainWindow = new BrowserWindow({
-    width: 1120,
-    height: 760,
-    minWidth: 420,
-    minHeight: 560,
-    title: 'OfficeAI 智能办公助手',
-    icon: resolveTrayIcon(),
-    autoHideMenuBar: true,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-
-  mainWindow.on('close', (event) => {
-    // On-demand mode must not leave a hidden process behind forever: closing
-    // the window hands control to the lifecycle monitor instead of hiding.
-    const mode = gateway?.store.getConfig().settings.launchMode;
-    if (!isQuitting && tray && mode !== 'on-demand') {
-      event.preventDefault();
-      mainWindow?.hide();
-      return;
-    }
-    if (!isQuitting && mode === 'on-demand') {
-      isQuitting = true;
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-    if (isQuitting) {
-      app.quit();
-    }
-  });
-
-  await mainWindow.loadURL(targetUrl);
-}
-
-/** Hide the taskbar/dock presence so OfficeAI behaves like a background service */
-function hideToTray(): void {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.hide();
-  }
-  if (process.platform === 'darwin') {
-    app.dock?.hide();
-  }
-}
-
-function createTray(): void {
-  if (!gateway) return;
-  tray = new Tray(resolveTrayIcon());
-  const mode = gateway.store.getConfig().settings.launchMode;
-  tray.setToolTip(
-    mode === 'on-demand'
-      ? 'OfficeAI 按需运行中（关闭所有 Office / WPS 后会自动退出）'
-      : 'OfficeAI 网关运行中 (Office / WPS AI 助手)'
-  );
-
-  const menu = Menu.buildFromTemplate([
-    {
-      label: '打开模型与集成配置中心',
-      click: () => void createMainWindow('/dashboard')
-    },
-    {
-      label: '打开独立 AI 助手窗口',
-      click: () => void createMainWindow('/')
-    },
-    { type: 'separator' },
-    {
-      label: '一键安装到 WPS Office（本地离线加载项）',
-      click: async () => {
-        if (!gateway) return;
-        const res = await gateway.integrator.installWps();
-        dialog.showMessageBox({
-          type: res.ok ? 'info' : 'warning',
-          title: 'WPS Office 集成',
-          message: res.message
-        });
-      }
-    },
-    {
-      label: '一键安装到 Microsoft Office',
-      click: async () => {
-        if (!gateway) return;
-        const res = await gateway.integrator.installMsOffice();
-        dialog.showMessageBox({
-          type: res.ok ? 'info' : 'warning',
-          title: 'Microsoft Office 集成',
-          message: res.message
-        });
-      }
-    },
-    { type: 'separator' },
-    {
-      label: '退出 OfficeAI',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      }
-    }
-  ]);
-
-  tray.setContextMenu(menu);
-  tray.on('double-click', () => void createMainWindow('/dashboard'));
-}
-
 // --integrate 为 NSIS 安装器的无头调用：必须在 singleInstance 锁之前处理，
-// 且不与正常桌面进程互斥（幂等，可与已运行实例并行）。直接用 process 退出，
-// 不走 Electron 窗口/托盘生命周期，避免“闪退”与单例抢占。
+// 且不与正常桌面进程互斥（幂等，可与已运行实例并行）。直接退出，
+// 不走任何窗口/托盘生命周期（已移除托盘图标，按用户要求无单独界面）。
 if (integrateRequested) {
-  // 完全绕过 Electron 单例与窗口初始化
   runHeadlessIntegration()
     .then(() => {
-      // 确保日志落盘后再退出；用 app.exit 而非 process.exit 以便 Electron 清理
       try {
         if (app.isReady()) app.quit();
       } catch {}
@@ -228,100 +92,89 @@ if (integrateRequested) {
 } else {
   const singleLock = app.requestSingleInstanceLock();
   if (!singleLock) {
-    // A gateway is already running: let the existing instance handle the deep
-    // link (e.g. WPS asked to start the assistant while it is already up).
+    // 已有网关在运行：让既有实例处理（WPS/Office 唤起时）
     app.quit();
   } else {
-  app.on('second-instance', (_event, argv) => {
-    const { deepLink } = resolveLaunchArguments(argv);
-    if (deepLink) {
-      const target = parseGatewayLaunchUrl(deepLink);
-      if (target) {
-        void createMainWindow('/dashboard');
-        return;
-      }
+    // 隐藏 Dock/任务栏图标，完全作为后台服务，参考其他 Office 助手（无托盘、面板内完成全部设置）
+    if (process.platform === 'darwin') {
+      app.dock?.hide();
     }
-    void createMainWindow('/dashboard');
-  });
 
-  app.whenReady().then(async () => {
-    try {
-      const assetsDir = resolveAssetsDir();
-      if (fs.existsSync(path.join(assetsDir, 'addin-ui'))) {
-        process.env.OFFICEAI_ASSETS_DIR = assetsDir;
-      }
-
-      // Declare who started us so the lifecycle monitor and the dashboard can
-      // show "started by WPS / by the start menu".
-      const launcher = launchArgs.deepLink ? 'addin' : 'desktop';
-      const target = launchArgs.deepLink ? parseGatewayLaunchUrl(launchArgs.deepLink) : undefined;
-
-      gateway = await startGateway({
-        launcher,
-        onExitRequested: (reason) => {
-          gatewayExitReason = reason;
-          isQuitting = true;
-          app.quit();
+    app.on('second-instance', (_event, argv) => {
+      const { deepLink } = resolveLaunchArguments(argv);
+      if (deepLink) {
+        const target = parseGatewayLaunchUrl(deepLink);
+        if (target) {
+          console.log(`[OfficeAI] 收到二次唤起: ${target}`);
         }
-      });
-
-      // The gateway may have fallen back to another port; report it back to the
-      // deep link target so we never land on a dead page.
-      if (target && target !== gateway.httpUrl) {
-        console.log(`[OfficeAI] 端口不同，期望 ${target}，实际 ${gateway.httpUrl}`);
       }
+      // 无窗口/托盘，不再弹 Dashboard；Office 面板内已可完成全部设置
+    });
 
-      createTray();
+    app.whenReady().then(async () => {
+      try {
+        const assetsDir = resolveAssetsDir();
+        if (fs.existsSync(path.join(assetsDir, 'addin-ui'))) {
+          process.env.OFFICEAI_ASSETS_DIR = assetsDir;
+        }
 
-      const mode = gateway.store.getConfig().settings.launchMode;
-      // 展示窗口：桌面启动应保持可见，避免“闪退”。只有由加载项唤起时才隐藏到托盘。
-      if (launcher === 'addin') {
-        // Started from WPS/Office: stay invisible, user is waiting inside Office
-        hideToTray();
-      } else if (mode === 'manual') {
-        hideToTray();
-      } else {
-        await createMainWindow('/dashboard');
-      }
+        const launcher = launchArgs.deepLink ? 'addin' : 'desktop';
+        const target = launchArgs.deepLink ? parseGatewayLaunchUrl(launchArgs.deepLink) : undefined;
 
-      // 兜底集成改为后台异步，不阻塞窗口/托盘的展示，避免首次启动长时间白屏或“闪退”感。
-      // 若唤醒器未安装或证书未信任（例如 NSIS 的 --integrate 被跳过/失败，或旧版升级），自动补做。
-      void (async () => {
-        try {
-          const status = await gateway!.integrator.getStatus();
-          if (!status.waker?.installed || !status.certTrusted) {
-            const res = await gateway!.integrator.installAll();
-            console.log(`[OfficeAI] 启动时后台自动集成：ok=${res.ok} ${res.message}`);
-            res.details?.forEach((d: string) => console.log(`  - ${d}`));
+        gateway = await startGateway({
+          launcher,
+          onExitRequested: (reason) => {
+            gatewayExitReason = reason;
+            isQuitting = true;
+            app.quit();
           }
-        } catch (err) {
-          console.warn('[OfficeAI] 启动时后台自动集成跳过:', err);
+        });
+
+        if (target && target !== gateway.httpUrl) {
+          console.log(`[OfficeAI] 端口不同，期望 ${target}，实际 ${gateway.httpUrl}`);
         }
-      })();
-    } catch (err) {
-      dialog.showErrorBox(
-        'OfficeAI 启动失败',
-        `本地网关启动失败，请检查端口 18080 / 18443 是否被占用：\n${err instanceof Error ? err.message : String(err)}`
-      );
+
+        // 无托盘、无独立窗口：所有设置已整合到 Office 侧边栏的「配置中心」
+        // （TaskPane 右上角“配置中心”按钮 ↔ DashboardView），此处不再 createTray / createMainWindow
+        console.log(`[OfficeAI] 网关已启动 ${gateway.httpUrl} (后台常驻，无托盘图标)`);
+
+        // 后台兜底集成（证书/Office/WPS/唤醒器），失败不影响网关运行，详情在 Office 面板可见
+        void (async () => {
+          try {
+            const status = await gateway!.integrator.getStatus();
+            if (!status.waker?.installed || !status.certTrusted) {
+              const res = await gateway!.integrator.installAll();
+              console.log(`[OfficeAI] 后台自动集成：ok=${res.ok} ${res.message}`);
+              res.details?.forEach((d: string) => console.log(`  - ${d}`));
+            }
+          } catch (err) {
+            console.warn('[OfficeAI] 后台自动集成跳过:', err);
+          }
+        })();
+      } catch (err) {
+        console.error(
+          `[OfficeAI] 本地网关启动失败，请检查端口 18080 / 18443 是否被占用：${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        isQuitting = true;
+        app.quit();
+      }
+    });
+
+    app.on('before-quit', async () => {
       isQuitting = true;
-      app.quit();
-    }
-  });
+      if (gateway) {
+        await gateway.close().catch(() => {});
+      }
+      if (gatewayExitReason) {
+        console.log(`[OfficeAI] 自动退出：${gatewayExitReason}`);
+      }
+    });
 
-  app.on('before-quit', async () => {
-    isQuitting = true;
-    if (gateway) {
-      await gateway.close().catch(() => {});
-    }
-    if (gatewayExitReason) {
-      console.log(`[OfficeAI] 自动退出：${gatewayExitReason}`);
-    }
-  });
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin' && !tray) {
-      app.quit();
-    }
-  });
+    // 无窗口应用：关闭所有窗口也不退出，保持后台常驻，由 Office 唤醒器/生命周期控制
+    app.on('window-all-closed', () => {
+      // 刻意不 quit，保持后台服务
+    });
   }
 }

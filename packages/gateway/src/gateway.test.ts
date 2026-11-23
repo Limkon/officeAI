@@ -229,11 +229,11 @@ test('On-demand launch: settings normalize, start page & office status are serve
   });
 
   try {
-    // Default is on-demand, never autostart
+    // Default is always (keep gateway resident, avoid blank panel after auto-exit)
     const cfgRes = await fetch(`${gw.httpUrl}/api/config`);
     const cfg = (await cfgRes.json()) as { settings: { launchMode: string; autoStartGateway: boolean } };
-    assert.equal(cfg.settings.launchMode, 'on-demand');
-    assert.equal(cfg.settings.autoStartGateway, false);
+    assert.equal(cfg.settings.launchMode, 'always');
+    assert.equal(cfg.settings.autoStartGateway, true);
 
     // Legacy payload `{ autoStartGateway: true }` maps to launchMode=always
     const putRes = await fetch(`${gw.httpUrl}/api/config/settings`, {
