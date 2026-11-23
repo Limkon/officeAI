@@ -114,8 +114,14 @@ function Get-WatcherStatus {
   $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
   $proc = Get-Process -Name 'OfficeAI.Watcher' -ErrorAction SilentlyContinue
+  $exeCandidates = @(
+    (Join-Path $ScriptDir $ExeName),
+    (Join-Path $ScriptDir "build\$ExeName")
+  ) | Where-Object { Test-Path $_ }
+
   [ordered]@{
     taskName = $TaskName
+    exePath = if ($exeCandidates) { (Resolve-Path $exeCandidates[0]).Path } else { $null }
     registered = [bool]$task
     state = if ($task) { [string]$task.State } else { 'Absent' }
     running = [bool]$proc
@@ -124,6 +130,12 @@ function Get-WatcherStatus {
     lastRunTime = if ($info) { [string]$info.LastRunTime } else { $null }
     startupBudgetMs = 0
   } | ConvertTo-Json -Depth 4
+}
+
+# -Build 对任何 Action 都生效（CI 会以 -Action Status -Build 只编译不注册）
+if ($Build) {
+  $builtExe = Build-Exe
+  Write-Host "已编译：$builtExe" -ForegroundColor Green
 }
 
 switch ($Action) {
