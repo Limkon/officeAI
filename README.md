@@ -29,7 +29,35 @@
 - **Microsoft Office（2016 / 2019 / 2021 / Microsoft 365）**：
   - 基于 Office Web Add-in（`Office.js`）+ 自动生成并信任的本地 HTTPS 证书（`Cert:\CurrentUser\Root`），一键旁加载到 Word / Excel / PowerPoint。
 
-### 3. Windows 桌面托盘控制中心
+### 3. 生命周期绑定办公软件（不做开机自启，也不后台常驻）
+**设计目标：打开 Office / WPS 才启动，全部关闭即退出，不浪费系统资源。**
+
+- **不写任何自启项（默认）**：不使用注册表 `Run`、启动文件夹或计划任务，重启电脑后不会自动运行任何 OfficeAI 进程。
+  仅当你主动改用「后台监听器」时，才会注册一条登录计划任务（界面与安装脚本都会明确提示）。
+- **WPS 全自动**：加载项以**本地离线加载项**安装到 `%APPDATA%\kingsoft\wps\jsaddons`，WPS 启动时直接读取，不依赖网关；点击「OfficeAI 助手」若服务未启动，会自动拉起 OfficeAI（首次可能弹一次 WPS 安全确认）。
+- **Microsoft Office 全自动**：二选一（配置中心可切换，只装选中的那个）
+
+| 触发方式 | 实现 | 常驻内存 | Office 启动开销 | 登录自启 |
+| --- | --- | --- | --- | --- |
+| **Office 唤醒器**（默认） | `OfficeAI.Waker.dll`（COM，`LoadBehavior=3`），在 `OnStartupComplete` 后的后台线程探活 | 0 | 0（异步，不阻塞启动） | **无** |
+| 后台监听器（可选） | `OfficeAI.Watcher.exe`，每 2s 查一次进程列表 | 约 10MB | 0 | 需要（计划任务） |
+
+> 默认的唤醒器模式**不注册任何开机 / 登录自启项**：登录后没有任何 OfficeAI 进程，
+> 只有打开 Word / Excel / PowerPoint 时，Office 才会加载约 60KB 的 DLL 并在后台线程里探活与拉起网关。
+
+  两者都不提供界面，侧边栏仍由 Web 加载项提供；也可用 `officeai://` + 桌面快捷方式手动拉起。
+- **兜底**：未安装唤醒器时，可用 `officeai://` 协议 + 桌面「OfficeAI 启动」快捷方式一键拉起。
+- **用完即走**：退出判定是「**引用计数**」式的——只要还有任一 Office/WPS 进程在跑，或仍有侧边栏在发心跳，网关就继续运行；两者都归零后 15 秒内自动退出。
+
+| 退出条件 | 判定方式 |
+| --- | --- |
+| Office / WPS 全部关闭 | `tasklist` 检测 `winword / excel / powerpnt / wps / et / wpp` 归零 |
+| 所有侧边栏已关闭 | 加载项每 30s `POST /api/office/session` 心跳，超时（默认 2 分钟）即释放 |
+| 长时间无人使用 | 空闲 `idleExitMinutes`（默认 10 分钟）无任何请求 |
+
+仅有约 15–30ms 的空转检测开销：轮询间隔 5 秒，仅在 `on-demand` 模式下运行。
+
+### 4. Windows 桌面托盘控制中心
 - 提供 Electron Windows 桌面应用（`OfficeAI-Setup.exe` 安装版 & Portable 便携版）与命令行/便携脚本版。
 - 内置模型配置中心、连通性测速与模型列表拉取、Office/WPS 一键安装卸载向导、自定义快捷指令库与调用日志统计。
 
@@ -77,14 +105,25 @@ npm test
 npm run package:portable
 ```
 
-在 Windows 上安装加载项并启动服务：
+在 Windows 上安装加载项（默认按需启动，不需要开机自启）：
 ```powershell
-# 一键注册 WPS 与 Microsoft Office 加载项
+# 一键安装：WPS 本地离线加载项 + officeai:// 一键启动协议 + Microsoft Office 加载项
 .\scripts\windows\Install-OfficeAI.bat
-
-# 启动本地 AI 网关并打开配置中心
-.\scripts\windows\Start-OfficeAI.bat
 ```
+
+日常使用：
+- **WPS**：直接打开 WPS → 点击顶部「OfficeAI 助手」，服务会自动拉起。
+- **Microsoft Office**：双击桌面「OfficeAI 启动」→ 再打开 Word / Excel / PPT。
+- 手动启动（调试用）：`.\scripts\windows\Start-OfficeAI.bat`
+
+启动行为可在配置中心 →「Office / WPS 安装集成」→「启动方式」中调整：
+| 模式 | 说明 |
+| --- | --- |
+| 按需启动（默认） | 点击加载项时自动启动；Office / WPS 全部关闭或空闲 N 分钟后自动退出 |
+| 常驻托盘 | 启动后一直在后台运行，直到手动退出 |
+| 仅手动 | 加载项只做提示，必须手动运行 OfficeAI |
+
+也可填写自定义启动命令（留空时自动探测 `OfficeAI.exe` 或 `Start-OfficeAI.bat`）。
 
 如需构建 Electron Windows `.exe` 安装包（在 Windows 环境下执行）：
 ```bash

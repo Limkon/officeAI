@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title OfficeAI 智能办公网关
+title OfficeAI 本地服务（按需启动）
 setlocal
 set ROOT_DIR=%~dp0
 if exist "%ROOT_DIR%gateway\cli.js" (
@@ -10,10 +10,10 @@ if exist "%ROOT_DIR%gateway\cli.js" (
   set CLI_PATH=%ROOT_DIR%..\..\packages\gateway\dist\cli.js
 )
 
-echo 正在启动 OfficeAI 本地网关...
-echo 控制中心: http://127.0.0.1:18080/dashboard
-echo 按 Ctrl+C 停止服务
-echo.
-start "" "http://127.0.0.1:18080/dashboard"
-node "%CLI_PATH%"
+rem --launched-by 只用于日志/诊断：记录是谁按需拉起了网关
+if "%~1"=="" (
+  node "%CLI_PATH%" --launched-by manual
+) else (
+  node "%CLI_PATH%" --launched-by manual --launch "%~1"
+)
 pause

@@ -1,12 +1,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow, Menu, Tray, dialog, nativeImage } from 'electron';
+import { parseGatewayLaunchUrl } from '@officeai/shared';
 import { startGateway, type RunningGateway } from '@officeai/gateway';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let gateway: RunningGateway | null = null;
 let isQuitting = false;
+let gatewayExitReason: string | null = null;
+
+/** `officeai://activate/<encoded url>` (or `--launch <url>`) opened by Office */
+function resolveLaunchArguments(argv: string[]): { deepLink?: string; appHint?: string } {
+  const launchIdx = argv.indexOf('--launch');
+  const deepLink = launchIdx >= 0 ? argv[launchIdx + 1] : argv.find((a) => a.startsWith('officeai://'));
+  const appIdx = argv.indexOf('--app');
+  const appHint = appIdx >= 0 ? argv[appIdx + 1] : undefined;
+  return { deepLink, appHint };
+}
+
+const launchArgs = resolveLaunchArguments(process.argv.slice(1));
 
 function resolveAssetsDir(): string {
   // Packaged Electron puts extraResources under process.resourcesPath/assets
@@ -56,19 +69,48 @@ async function createMainWindow(urlPath = '/dashboard'): Promise<void> {
   });
 
   mainWindow.on('close', (event) => {
-    if (!isQuitting && tray) {
+    // On-demand mode must not leave a hidden process behind forever: closing
+    // the window hands control to the lifecycle monitor instead of hiding.
+    const mode = gateway?.store.getConfig().settings.launchMode;
+    if (!isQuitting && tray && mode !== 'on-demand') {
       event.preventDefault();
       mainWindow?.hide();
+      return;
+    }
+    if (!isQuitting && mode === 'on-demand') {
+      isQuitting = true;
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    if (isQuitting) {
+      app.quit();
     }
   });
 
   await mainWindow.loadURL(targetUrl);
 }
 
+/** Hide the taskbar/dock presence so OfficeAI behaves like a background service */
+function hideToTray(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.hide();
+  }
+  if (process.platform === 'darwin') {
+    app.dock?.hide();
+  }
+}
+
 function createTray(): void {
   if (!gateway) return;
   tray = new Tray(resolveTrayIcon());
-  tray.setToolTip('OfficeAI 网关运行中 (Office / WPS AI 助手)');
+  const mode = gateway.store.getConfig().settings.launchMode;
+  tray.setToolTip(
+    mode === 'on-demand'
+      ? 'OfficeAI 按需运行中（关闭所有 Office / WPS 后会自动退出）'
+      : 'OfficeAI 网关运行中 (Office / WPS AI 助手)'
+  );
 
   const menu = Menu.buildFromTemplate([
     {
@@ -81,7 +123,7 @@ function createTray(): void {
     },
     { type: 'separator' },
     {
-      label: '一键安装到 WPS Office',
+      label: '一键安装到 WPS Office（本地离线加载项）',
       click: async () => {
         if (!gateway) return;
         const res = await gateway.integrator.installWps();
@@ -120,9 +162,19 @@ function createTray(): void {
 
 const singleLock = app.requestSingleInstanceLock();
 if (!singleLock) {
+  // A gateway is already running: let the existing instance handle the deep
+  // link (e.g. WPS asked to start the assistant while it is already up).
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    const { deepLink } = resolveLaunchArguments(argv);
+    if (deepLink) {
+      const target = parseGatewayLaunchUrl(deepLink);
+      if (target) {
+        void createMainWindow('/dashboard');
+        return;
+      }
+    }
     void createMainWindow('/dashboard');
   });
 
@@ -133,9 +185,40 @@ if (!singleLock) {
         process.env.OFFICEAI_ASSETS_DIR = assetsDir;
       }
 
-      gateway = await startGateway();
+      // Declare who started us so the lifecycle monitor and the dashboard can
+      // show "started by WPS / by the start menu".
+      const launcher = launchArgs.deepLink ? 'addin' : 'desktop';
+      const target = launchArgs.deepLink ? parseGatewayLaunchUrl(launchArgs.deepLink) : undefined;
+
+      gateway = await startGateway({
+        launcher,
+        onExitRequested: (reason) => {
+          gatewayExitReason = reason;
+          isQuitting = true;
+          app.quit();
+        }
+      });
+
+      // The gateway may have fallen back to another port; report it back to the
+      // deep link target so we never land on a dead page.
+      if (target && target !== gateway.httpUrl) {
+        console.log(`[OfficeAI] 端口不同，期望 ${target}，实际 ${gateway.httpUrl}`);
+      }
+
       createTray();
-      await createMainWindow('/dashboard');
+
+      const mode = gateway.store.getConfig().settings.launchMode;
+      if (launcher === 'addin') {
+        // Started from WPS: stay invisible, user is waiting inside WPS
+        hideToTray();
+      } else if (mode === 'on-demand') {
+        await createMainWindow('/dashboard');
+        hideToTray();
+      } else if (mode === 'manual') {
+        hideToTray();
+      } else {
+        await createMainWindow('/dashboard');
+      }
     } catch (err) {
       dialog.showErrorBox(
         'OfficeAI 启动失败',
@@ -150,6 +233,9 @@ if (!singleLock) {
     isQuitting = true;
     if (gateway) {
       await gateway.close().catch(() => {});
+    }
+    if (gatewayExitReason) {
+      console.log(`[OfficeAI] 自动退出：${gatewayExitReason}`);
     }
   });
 

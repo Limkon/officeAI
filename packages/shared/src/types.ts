@@ -59,6 +59,21 @@ export interface PromptAction {
   builtIn?: boolean;
 }
 
+/**
+ * 网关启动策略：
+ * - manual    仅手动启动（桌面客户端 / Start-OfficeAI.bat）
+ * - on-demand 由 Office / WPS 加载项在用到时自动拉起（推荐）
+ * - always    桌面客户端启动即常驻（不做开机自启）
+ */
+export type GatewayLaunchMode = 'manual' | 'on-demand' | 'always';
+
+/**
+ * 由谁来拉起网关：
+ * - watcher 后台监听器常驻轮询进程列表后启动（Office 启动路径零开销）
+ * - waker   Office COM 加载项在宿主进程内探活后启动（无常驻进程）
+ */
+export type LaunchTrigger = 'watcher' | 'waker';
+
 export interface AppSettings {
   httpPort: number;
   httpsPort: number;
@@ -68,7 +83,19 @@ export interface AppSettings {
   maxTokens: number;
   systemPrompt: string;
   language: 'zh-CN' | 'en-US';
+  /** 桌面客户端启动时是否立即拉起网关（= launchMode 为 always） */
   autoStartGateway: boolean;
+  launchMode: GatewayLaunchMode;
+  /** 自定义启动命令；为空时由加载项按安装位置自动探测 */
+  gatewayLaunchCommand: string;
+  /** Word/Excel/PPT/WPS 全部关闭后自动退出网关（仅 on-demand 生效） */
+  exitWithOffice: boolean;
+  /** 最后一段时间无请求后自动退出；0 表示不按空闲退出 */
+  idleExitMinutes: number;
+  /** 加载项心跳超时（分钟）：页面关闭后多久视为该窗口已释放 */
+  sessionGraceMinutes: number;
+  /** 触发方式：后台监听器（常驻）或 Office 唤醒器（无常驻） */
+  launchTrigger: LaunchTrigger;
 }
 
 export interface UsageRecord {
@@ -135,6 +162,12 @@ export interface LocalRuntimeStatus {
   error?: string;
 }
 
+export interface LaunchTargetInfo {
+  command: string;
+  kind: 'bat' | 'exe' | 'command' | 'none';
+  source: string;
+}
+
 export interface WindowsOfficeStatus {
   platform: string;
   isWindows: boolean;
@@ -142,6 +175,35 @@ export interface WindowsOfficeStatus {
   gatewayHttpsUrl: string;
   certExists: boolean;
   certTrusted: boolean;
+  /** Office 唤醒器（COM 加载项）：随 Word/Excel/PPT 启动自动拉起网关 */
+  waker?: {
+    installed: boolean;
+    loadBehavior: Record<string, number | null>;
+  };
+  /** 后台监听器（常驻轻量进程 + 登录自启计划任务） */
+  watcher?: {
+    installed: boolean;
+    running: boolean;
+    state?: string;
+    pid?: number | null;
+    memoryMB?: number | null;
+  };
+  /** How OfficeAI is started on demand, and whether the one-click link is ready */
+  launch?: {
+    target: LaunchTargetInfo;
+    protocolRegistered: boolean;
+    startPageUrl: string;
+    launchUrl: string;
+    officeRunning: boolean;
+    runningProcesses: string[];
+    lifecycle?: {
+      mode: string;
+      launcher: string;
+      upMinutes: number;
+      lastActivitySeconds: number;
+      sessions: Array<{ app: string; source: string; idleSeconds: number }>;
+    };
+  };
   msOffice: {
     detected: boolean;
     version?: string;
@@ -154,5 +216,8 @@ export interface WindowsOfficeStatus {
     addonsDir?: string;
     installed: boolean;
     jspluginsXmlPath?: string;
+    /** Local (offline) add-in folder, used for on-demand launch */
+    localAddinPath?: string;
+    mode?: 'local' | 'online' | 'none';
   };
 }

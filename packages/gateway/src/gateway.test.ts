@@ -217,3 +217,98 @@ test('Gateway serves config, handles CORS/path-traversal, stream_options fallbac
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test('On-demand launch: settings normalize, start page & office status are served', async () => {
+  const dataDir = createTempDir('officeai-launch-');
+  const gw = await startGateway({
+    dataDir,
+    httpPort: 0,
+    httpsPort: 0,
+    enableHttps: false,
+    launcher: 'test'
+  });
+
+  try {
+    // Default is on-demand, never autostart
+    const cfgRes = await fetch(`${gw.httpUrl}/api/config`);
+    const cfg = (await cfgRes.json()) as { settings: { launchMode: string; autoStartGateway: boolean } };
+    assert.equal(cfg.settings.launchMode, 'on-demand');
+    assert.equal(cfg.settings.autoStartGateway, false);
+
+    // Legacy payload `{ autoStartGateway: true }` maps to launchMode=always
+    const putRes = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoStartGateway: true })
+    });
+    const putJson = (await putRes.json()) as { settings: { launchMode: string } };
+    assert.equal(putJson.settings.launchMode, 'always');
+
+    const idleRes = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ launchMode: 'on-demand', idleExitMinutes: 999 })
+    });
+    const idleJson = (await idleRes.json()) as { settings: { idleExitMinutes: number } };
+    assert.equal(idleJson.settings.idleExitMinutes, 240);
+
+    // launchTrigger must stay one of the two supported values
+    const triggerRes = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ launchTrigger: 'waker' })
+    });
+    const triggerJson = (await triggerRes.json()) as { settings: { launchTrigger: string } };
+    assert.equal(triggerJson.settings.launchTrigger, 'waker');
+
+    const badTrigger = await fetch(`${gw.httpUrl}/api/config/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ launchTrigger: 'nonsense' })
+    });
+    const badJson = (await badTrigger.json()) as { settings: { launchTrigger: string } };
+    assert.equal(badJson.settings.launchTrigger, 'waker');
+
+    // The launcher page is what WPS/Office users see when the gateway is down
+    const startRes = await fetch(`${gw.httpUrl}/start`);
+    assert.equal(startRes.status, 200);
+    const startHtml = await startRes.text();
+    assert.ok(startHtml.includes('OfficeAI 服务未启动'));
+    assert.ok(startHtml.includes('officeai://activate/'));
+
+    // /api/office/status is polled by the local WPS add-in
+    const statusRes = await fetch(`${gw.httpUrl}/api/office/status?app=wps`);
+    assert.equal(statusRes.status, 200);
+    const status = (await statusRes.json()) as {
+      running: boolean;
+      gatewayHttpUrl: string;
+      startPageUrl: string;
+      launchUrl: string;
+      launchTarget: unknown;
+    };
+    assert.equal(status.running, true);
+    assert.equal(status.gatewayHttpUrl, gw.httpUrl);
+    assert.equal(status.startPageUrl, `${gw.httpUrl}/start`);
+    assert.ok(status.launchUrl.startsWith('officeai://activate/'));
+
+    // Task pane heartbeat registers a live session that holds the gateway
+    const beatRes = await fetch(`${gw.httpUrl}/api/office/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app: 'word', source: 'addin' })
+    });
+    assert.equal(beatRes.status, 200);
+    const officeStatus2 = (await (
+      await fetch(`${gw.httpUrl}/api/office/status`)
+    ).json()) as { lifecycle: { sessions: Array<{ app: string }> } };
+    assert.equal(officeStatus2.lifecycle.sessions.length, 1);
+    assert.equal(officeStatus2.lifecycle.sessions[0].app, 'word');
+
+    // WPS bootstrap launcher page is bundled with the add-in
+    const bootRes = await fetch(`${gw.httpUrl}/wps/bootstrap.html`);
+    assert.equal(bootRes.status, 200);
+  } finally {
+    await gw.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

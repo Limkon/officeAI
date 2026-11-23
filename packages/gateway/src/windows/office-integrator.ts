@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { WindowsOfficeStatus } from '@officeai/shared';
+import { buildGatewayLaunchUrl, type WindowsOfficeStatus } from '@officeai/shared';
+import { detectOfficeProcesses, type OfficeProcessState } from '../process-watch.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,8 +22,154 @@ export class WindowsOfficeIntegrator {
     private readonly dataDir: string,
     private readonly httpPort: number,
     private readonly httpsPort: number,
-    private readonly assetsRoot: string
+    private readonly assetsRoot: string,
+    /** How OfficeAI itself is started (used to wire on-demand launch) */
+    private readonly launchCommand = '',
+    /** Optional lifecycle snapshot provider (sessions / uptime) */
+    private readonly getLifecycleStatus?: () => {
+      mode: string;
+      launcher: string;
+      upMinutes: number;
+      lastActivitySeconds: number;
+      sessions: Array<{ app: string; source: string; idleSeconds: number }>;
+    } | null
   ) {}
+
+  /** Folder name of the locally installed (offline) WPS add-in */
+  private get wpsAddonFolderName(): string {
+    return 'officeai_1.0.0';
+  }
+
+  private get wpsLocalAddonPath(): string {
+    return path.join(this.wpsAddonsRoot, this.wpsAddonFolderName);
+  }
+
+  /** Office 唤醒器（COM 加载项）DLL 的位置 */
+  private get wakerDllCandidates(): string[] {
+    return [
+      path.join(this.assetsRoot, 'waker', 'OfficeAI.Waker.dll'),
+      path.join(this.dataDir, 'waker', 'OfficeAI.Waker.dll'),
+      path.join(this.assetsRoot, '..', 'windows', 'waker', 'build', 'OfficeAI.Waker.dll')
+    ];
+  }
+
+  /** 后台监听器状态：计划任务是否注册、进程是否在跑、内存占用 */
+  private async getWatcherStatus(): Promise<{
+    installed: boolean;
+    running: boolean;
+    state?: string;
+    pid?: number | null;
+    memoryMB?: number | null;
+  }> {
+    if (!this.isWindows) return { installed: false, running: false };
+    try {
+      const { stdout } = await this.runPowerShell(
+        `$task = Get-ScheduledTask -TaskName 'OfficeAI Watcher' -ErrorAction SilentlyContinue; ` +
+          `$proc = Get-Process -Name 'OfficeAI.Watcher' -ErrorAction SilentlyContinue; ` +
+          `[ordered]@{ registered = [bool]$task; state = if ($task) { [string]$task.State } else { 'Absent' }; ` +
+          `running = [bool]$proc; pid = if ($proc) { $proc.Id } else { $null }; ` +
+          `memoryMB = if ($proc) { [math]::Round($proc.WorkingSet64 / 1MB, 1) } else { $null } } | ConvertTo-Json -Compress`
+      );
+      const parsed = JSON.parse(stdout.trim() || '{}') as {
+        registered?: boolean;
+        running?: boolean;
+        state?: string;
+        pid?: number | null;
+        memoryMB?: number | null;
+      };
+      return {
+        installed: Boolean(parsed.registered),
+        running: Boolean(parsed.running),
+        state: parsed.state,
+        pid: parsed.pid ?? null,
+        memoryMB: parsed.memoryMB ?? null
+      };
+    } catch {
+      return { installed: false, running: false };
+    }
+  }
+
+  private get watcherScript(): string {
+    return path.join(this.assetsRoot, 'waker', 'install-watcher.ps1');
+  }
+
+  /** 安装后台监听器（登录自启的计划任务 + 轻量常驻进程） */
+  async installOfficeWatcher(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) return { ok: false, message: '后台监听器仅支持 Windows。' };
+    if (!fs.existsSync(this.watcherScript)) {
+      return {
+        ok: false,
+        message: `未找到安装脚本：${this.watcherScript}。可手动执行 windows/waker/install-watcher.ps1 -Action Install -Build`
+      };
+    }
+    try {
+      const { stdout, stderr } = await this.runPowerShell(
+        `& '${this.watcherScript.replace(/'/g, "''")}' -Action Install -Build`
+      );
+      return {
+        ok: true,
+        message:
+          '后台监听器安装成功，但请注意：它会注册「登录时自启」的计划任务并常驻约 10MB。' +
+          '如果不想开机就运行任何进程，请卸载它并改用「Office 唤醒器」（默认方式）。',
+        details: [stdout.trim(), stderr.trim()].filter(Boolean)
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `后台监听器安装失败：${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  async uninstallOfficeWatcher(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) return { ok: false, message: '后台监听器仅支持 Windows。' };
+    try {
+      await this.runPowerShell(`& '${this.watcherScript.replace(/'/g, "''")}' -Action Uninstall`);
+      return { ok: true, message: '已卸载后台监听器（登录自启已移除）。' };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `卸载后台监听器失败：${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  private async getWakerStatus(): Promise<{ installed: boolean; loadBehavior: Record<string, number | null> }> {
+    const loadBehavior: Record<string, number | null> = { Word: null, Excel: null, PowerPoint: null };
+    if (!this.isWindows) return { installed: false, loadBehavior };
+
+    let installed = false;
+    for (const app of Object.keys(loadBehavior)) {
+      try {
+        const { stdout } = await this.runReg([
+          'query',
+          `HKCU\\Software\\Microsoft\\Office\\${app}\\Addins\\OfficeAI.Waker`,
+          '/v',
+          'LoadBehavior'
+        ]);
+        const match = /LoadBehavior\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(stdout);
+        loadBehavior[app] = match ? parseInt(match[1], 16) : 3;
+        if (loadBehavior[app] === 3) installed = true;
+      } catch {
+        loadBehavior[app] = null;
+      }
+    }
+    return { installed, loadBehavior };
+  }
+
+  private async isProtocolRegistered(): Promise<boolean> {
+    if (!this.isWindows) return false;
+    try {
+      const { stdout } = await this.runReg([
+        'query',
+        'HKCU\\Software\\Classes\\officeai\\shell\\open\\command',
+        '/ve'
+      ]);
+      return stdout.toLowerCase().includes('officeai');
+    } catch {
+      return false;
+    }
+  }
 
   private get isWindows(): boolean {
     return process.platform === 'win32';
@@ -61,6 +208,8 @@ export class WindowsOfficeIntegrator {
     let msInstalled = false;
     let wpsDetected = false;
     let wpsInstalled = false;
+    let wpsLocalInstalled = false;
+    let wpsMode: 'local' | 'online' | 'none' = 'none';
 
     if (this.isWindows) {
       // Check certificate trust
@@ -117,26 +266,56 @@ export class WindowsOfficeIntegrator {
         }
       }
 
+      wpsLocalInstalled = fs.existsSync(path.join(this.wpsLocalAddonPath, 'ribbon.xml'));
+
       const publishXml = path.join(this.wpsAddonsRoot, 'publish.xml');
       const jspluginsXml = path.join(this.wpsAddonsRoot, 'jsplugins.xml');
       for (const xmlPath of [publishXml, jspluginsXml]) {
-        if (fs.existsSync(xmlPath)) {
-          const txt = fs.readFileSync(xmlPath, 'utf8');
-          if (txt.includes('name="officeai"')) {
-            wpsInstalled = true;
-            break;
-          }
+        if (!fs.existsSync(xmlPath)) continue;
+        const txt = fs.readFileSync(xmlPath, 'utf8');
+        if (!txt.includes('name="officeai"')) continue;
+        wpsInstalled = true;
+        if (txt.includes('file:///')) {
+          wpsMode = 'local';
+        } else if (wpsMode !== 'local') {
+          wpsMode = 'online';
         }
       }
+      if (wpsLocalInstalled) {
+        wpsInstalled = true;
+        wpsMode = 'local';
+      }
     }
+
+    const officeState: OfficeProcessState = await detectOfficeProcesses();
+    const httpUrl = `http://127.0.0.1:${this.httpPort}`;
 
     return {
       platform: process.platform,
       isWindows: this.isWindows,
-      gatewayHttpUrl: `http://127.0.0.1:${this.httpPort}`,
+      gatewayHttpUrl: httpUrl,
       gatewayHttpsUrl: `https://127.0.0.1:${this.httpsPort}`,
       certExists,
       certTrusted,
+      waker: await this.getWakerStatus(),
+      watcher: await this.getWatcherStatus(),
+      launch: {
+        target: {
+          command: this.launchCommand,
+          kind: this.launchCommand
+            ? this.launchCommand.toLowerCase().endsWith('.bat')
+              ? 'bat'
+              : 'exe'
+            : 'none',
+          source: this.launchCommand ? 'detected' : 'none'
+        },
+        protocolRegistered: await this.isProtocolRegistered(),
+        startPageUrl: `${httpUrl}/start`,
+        launchUrl: buildGatewayLaunchUrl(httpUrl, 'office'),
+        officeRunning: officeState.running,
+        runningProcesses: officeState.processes,
+        lifecycle: this.getLifecycleStatus?.() ?? undefined
+      },
       msOffice: {
         detected: msDetected,
         version: msVersion,
@@ -148,6 +327,8 @@ export class WindowsOfficeIntegrator {
         detected: wpsDetected,
         addonsDir: this.wpsAddonsRoot,
         installed: wpsInstalled,
+        localAddinPath: wpsLocalInstalled ? this.wpsLocalAddonPath : undefined,
+        mode: wpsMode,
         jspluginsXmlPath: path.join(this.wpsAddonsRoot, 'publish.xml')
       }
     };
@@ -158,7 +339,9 @@ export class WindowsOfficeIntegrator {
     let content = fs.readFileSync(templatePath, 'utf8');
     content = content
       .replace(/https:\/\/127\.0\.0\.1:18443/g, `https://127.0.0.1:${this.httpsPort}`)
-      .replace(/http:\/\/127\.0\.0\.1:18080/g, `http://127.0.0.1:${this.httpPort}`);
+      .replace(/http:\/\/127\.0\.0\.1:18080/g, `http://127.0.0.1:${this.httpPort}`)
+      // Office users may land on the launcher page so they can start the gateway
+      .replace(/(<SupportUrl DefaultValue="[^"]*)\/dashboard"/, '$1/start"');
     return content;
   }
 
@@ -185,6 +368,66 @@ export class WindowsOfficeIntegrator {
       return {
         ok: false,
         message: `导入证书失败: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  /**
+   * 安装 Office 唤醒器：一个极小的 COM 加载项，Word/Excel/PPT 启动时由它
+   * 拉起本地网关（不提供 UI，不常驻）。这是"打开 Office 才启动"的关键。
+   */
+  async installOfficeWaker(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) {
+      return { ok: false, message: '唤醒器仅支持 Windows。' };
+    }
+
+    const dll = this.wakerDllCandidates.find((candidate) => fs.existsSync(candidate));
+    if (!dll) {
+      return {
+        ok: false,
+        message:
+          '未找到 OfficeAI.Waker.dll。请先运行 windows/waker/install-waker.ps1 -Action Install -Build 编译并注册。'
+      };
+    }
+
+    const script = path.join(this.assetsRoot, 'waker', 'install-waker.ps1');
+    if (!fs.existsSync(script)) {
+      return {
+        ok: false,
+        message: `未找到安装脚本：${script}。可手动执行 windows/waker/install-waker.ps1 -Action Install -Build`
+      };
+    }
+
+    try {
+      const { stdout, stderr } = await this.runPowerShell(
+        `& '${script.replace(/'/g, "''")}' -Action Install -DllPath '${dll.replace(/'/g, "''")}'`
+      );
+      return {
+        ok: true,
+        message:
+          'Office 唤醒器安装成功！下次打开 Word / Excel / PowerPoint 时会自动启动 OfficeAI，全部关闭后自动退出。',
+        details: [stdout.trim(), stderr.trim()].filter(Boolean)
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `唤醒器安装失败：${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  }
+
+  async uninstallOfficeWaker(): Promise<IntegrationActionResult> {
+    if (!this.isWindows) {
+      return { ok: false, message: '唤醒器仅支持 Windows。' };
+    }
+    const script = path.join(this.assetsRoot, 'waker', 'install-waker.ps1');
+    try {
+      await this.runPowerShell(`& '${script.replace(/'/g, "''")}' -Action Uninstall`);
+      return { ok: true, message: '已卸载 Office 唤醒器，Office 不再自动启动 OfficeAI。' };
+    } catch (err) {
+      return {
+        ok: false,
+        message: `卸载唤醒器失败：${err instanceof Error ? err.message : String(err)}`
       };
     }
   }
@@ -248,51 +491,105 @@ export class WindowsOfficeIntegrator {
     }
   }
 
-  private mergeWpsPluginXml(existingXml: string | null, gatewayHttpUrl: string): string {
-    const cleanUrl = `${gatewayHttpUrl.replace(/\/+$/, '')}/wps/`;
-    const entries = [
-      `<jsplugin name="officeai" type="wps" url="${cleanUrl}" version="1.0.0" enable="enable_dev"/>`,
-      `<jsplugin name="officeai" type="et" url="${cleanUrl}" version="1.0.0" enable="enable_dev"/>`,
-      `<jsplugin name="officeai" type="wpp" url="${cleanUrl}" version="1.0.0" enable="enable_dev"/>`
-    ];
+  /** Public wrapper used by the launcher page / dashboard */
+  async installWpsLocalAddon(): Promise<IntegrationActionResult> {
+    return this.installWps();
+  }
 
+  get localWpsAddonPath(): string {
+    return this.wpsLocalAddonPath;
+  }
+
+  private buildWpsPluginEntries(): string[] {
+    // Local (offline) add-in: WPS loads these files straight from jsaddons with
+    // the file:// protocol, so nothing depends on the gateway being up.
+    const normalizedRoot = this.wpsAddonsRoot.replace(/\\/g, '/').replace(/^\/+/, '');
+    const localUrl = `file:///${normalizedRoot}/${this.wpsAddonFolderName}/`;
+    return ['wps', 'et', 'wpp'].map(
+      (type) =>
+        `<jsplugin name="officeai" type="${type}" url="${localUrl}" version="1.0.0" enable="enable_dev"/>`
+    );
+  }
+
+  private mergeWpsPluginXml(existingXml: string | null): string {
+    const entries = this.buildWpsPluginEntries();
     if (!existingXml || !existingXml.includes('<jsplugins')) {
       return `<?xml version="1.0" encoding="UTF-8"?>\n<jsplugins>\n  ${entries.join('\n  ')}\n</jsplugins>\n`;
     }
 
-    // Remove previous officeai entries and keep other user plugins intact
+    // Remove previous officeai entries (online + offline) and keep other plugins intact
     let normalized = existingXml.replace(/<jsplugins\s*\/>/i, '<jsplugins></jsplugins>');
     normalized = normalized
-      .replace(/<jsplugin\b[^>]*name="officeai"[^>]*\/>\s*/g, '')
+      .replace(/<jsplugin\b[^>]*name="officeai"[^>]*\/>\s*/gi, '')
       .replace(/<\/jsplugins>/i, `  ${entries.join('\n  ')}\n</jsplugins>`);
     return normalized;
   }
 
   private removeWpsPluginXml(existingXml: string): string {
-    return existingXml.replace(/\s*<jsplugin\b[^>]*name="officeai"[^>]*\/>/g, '');
+    return existingXml.replace(/\s*<jsplugin\b[^>]*name="officeai"[^>]*\/>/gi, '');
+  }
+
+  /**
+   * Copies the WPS add-in into jsaddons as a self-contained folder, with the
+   * launcher placeholders filled in so a ribbon click can start the gateway.
+   */
+  private installLocalWpsAddon(): string {
+    const src = path.join(this.assetsRoot, 'wps-addin');
+    const dest = path.join(this.wpsAddonsRoot, this.wpsAddonFolderName);
+    const gatewayHttpUrl = `http://127.0.0.1:${this.httpPort}`;
+    const replacements: Record<string, string> = {
+      __OFFICEAI_GATEWAY_URL__: gatewayHttpUrl,
+      __OFFICEAI_LAUNCH_COMMAND__: this.launchCommand,
+      __OFFICEAI_LAUNCH_URL__: buildGatewayLaunchUrl(gatewayHttpUrl, 'wps'),
+      __OFFICEAI_BOOTSTRAP_URL__: `${gatewayHttpUrl}/wps/bootstrap.html`
+    };
+
+    // Values are injected inside single-quoted JS strings: escape both
+    // backslashes and quotes so Windows paths survive (C:\\Users\\...).
+    const escapeJsString = (value: string) => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+    fs.rmSync(dest, { recursive: true, force: true });
+    const copy = (from: string, to: string) => {
+      fs.mkdirSync(to, { recursive: true });
+      for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+        const srcPath = path.join(from, entry.name);
+        const destPath = path.join(to, entry.name);
+        if (entry.isDirectory()) {
+          copy(srcPath, destPath);
+        } else if (/[.](html?|js|json|xml)$/i.test(entry.name)) {
+          let text = fs.readFileSync(srcPath, 'utf8');
+          const isJs = /\.js$/i.test(entry.name);
+          for (const [key, value] of Object.entries(replacements)) {
+            text = text.split(key).join(isJs ? escapeJsString(value) : value);
+          }
+          fs.writeFileSync(destPath, text, 'utf8');
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
+      }
+    };
+
+    if (fs.existsSync(src)) {
+      copy(src, dest);
+    }
+    return dest;
   }
 
   async installWps(): Promise<IntegrationActionResult> {
     const details: string[] = [];
-    const gatewayHttpUrl = `http://127.0.0.1:${this.httpPort}`;
-
-    // Copy static WPS addon files into dataDir/wps-addon for reference / offline inspection
-    const wpsSrc = path.join(this.assetsRoot, 'wps-addin');
-    const wpsTarget = path.join(this.dataDir, 'wps-addon');
-    if (fs.existsSync(wpsSrc)) {
-      fs.mkdirSync(wpsTarget, { recursive: true });
-      for (const file of fs.readdirSync(wpsSrc)) {
-        const srcFile = path.join(wpsSrc, file);
-        if (fs.statSync(srcFile).isFile()) {
-          let content = fs.readFileSync(srcFile, 'utf8');
-          content = content.replace(/http:\/\/127\.0\.0\.1:18080/g, gatewayHttpUrl);
-          fs.writeFileSync(path.join(wpsTarget, file), content, 'utf8');
-        }
-      }
-      details.push(`已同步 WPS 加载项资源到: ${wpsTarget}`);
-    }
 
     if (!this.isWindows) {
+      const wpsTarget = path.join(this.dataDir, 'wps-addon');
+      fs.rmSync(wpsTarget, { recursive: true, force: true });
+      const src = path.join(this.assetsRoot, 'wps-addin');
+      if (fs.existsSync(src)) {
+        fs.mkdirSync(wpsTarget, { recursive: true });
+        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+          if (entry.isFile()) {
+            fs.copyFileSync(path.join(src, entry.name), path.join(wpsTarget, entry.name));
+          }
+        }
+      }
       return {
         ok: false,
         message: '已生成 WPS 加载项文件，但当前非 Windows 系统，未写入 %APPDATA%\\kingsoft\\wps\\jsaddons。',
@@ -301,20 +598,25 @@ export class WindowsOfficeIntegrator {
     }
 
     fs.mkdirSync(this.wpsAddonsRoot, { recursive: true });
+    const addonDir = this.installLocalWpsAddon();
+    details.push(`已安装本地离线加载项: ${addonDir}`);
 
     for (const xmlName of ['publish.xml', 'jsplugins.xml']) {
       const xmlPath = path.join(this.wpsAddonsRoot, xmlName);
       const existing = fs.existsSync(xmlPath) ? fs.readFileSync(xmlPath, 'utf8') : null;
-      const merged = this.mergeWpsPluginXml(existing, gatewayHttpUrl);
-      fs.writeFileSync(xmlPath, merged, 'utf8');
+      fs.writeFileSync(xmlPath, this.mergeWpsPluginXml(existing), 'utf8');
       details.push(`已更新 WPS 配置: ${xmlPath}`);
     }
+
+    const launchHint = this.launchCommand
+      ? `点击「OfficeAI 助手」选项卡时若服务未运行，会自动启动：${this.launchCommand}`
+      : '未找到 OfficeAI 启动程序，点击按钮时只会提示手动启动。请在配置中心填写「启动命令」。';
 
     return {
       ok: true,
       message:
-        'WPS Office 加载项安装成功！请重启 WPS（文字 / 表格 / 演示），顶部菜单栏将出现「OfficeAI」选项卡。',
-      details
+        'WPS Office 加载项安装成功！（本地离线模式，不依赖服务先启动）请重启 WPS（文字 / 表格 / 演示），顶部将出现「OfficeAI 助手」选项卡。',
+      details: [...details, launchHint]
     };
   }
 
@@ -330,6 +632,7 @@ export class WindowsOfficeIntegrator {
         fs.writeFileSync(xmlPath, this.removeWpsPluginXml(current), 'utf8');
       }
     }
+    fs.rmSync(path.join(this.wpsAddonsRoot, this.wpsAddonFolderName), { recursive: true, force: true });
     return { ok: true, message: '已从 WPS Office 移除 OfficeAI 加载项。' };
   }
 }

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OfficeAI 启动中</title>
+  <style>
+    body { margin:0; font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; background:#f8fafc; color:#0f172a; }
+    .wrap { max-width:520px; margin:0 auto; padding:32px 24px; }
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:20px; }
+    h1 { font-size:17px; margin:0 0 8px; }
+    p { font-size:13px; line-height:1.7; color:#475569; margin:0 0 14px; }
+    .row { display:flex; align-items:center; gap:10px; font-size:13px; color:#334155; }
+    .dot { width:10px; height:10px; border-radius:999px; background:#f59e0b; animation:pulse 1.2s infinite; }
+    .dot.ok { background:#10b981; animation:none; }
+    @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.3 } }
+    code { display:block; background:#0f172a; color:#e2e8f0; border-radius:8px; padding:9px 11px;
+      font-size:11px; word-break:break-all; margin:12px 0 0; }
+    button { width:100%; border:0; border-radius:10px; padding:11px 14px; font-size:14px; font-weight:600;
+      color:#fff; background:#2563eb; cursor:pointer; margin-top:14px; }
+    .hint { font-size:12px; color:#64748b; margin-top:10px; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>正在启动 OfficeAI 本地服务</h1>
+    <p>窗口出现后会自动进入 AI 助手；如果长时间没有反应，可按下面的命令手动启动。</p>
+    <div class="row"><span class="dot" id="dot"></span><span id="state">正在检测 127.0.0.1:18080 …</span></div>
+    <button id="open">已经启动，直接打开助手</button>
+    <p class="hint">说明：OfficeAI 只在需要时启动，不会随系统开机自动运行；关闭所有 Office / WPS 后会自动退出。</p>
+    <code id="cmd"></code>
+  </div>
+</div>
+<script>
+  var params = new URLSearchParams(window.location.search);
+  var host = params.get('app') || 'wps-writer';
+  var explicitGateway = params.get('gateway');
+  var CANDIDATES = [];
+  if (explicitGateway) CANDIDATES.push(explicitGateway);
+  CANDIDATES.push('http://127.0.0.1:18080');
+  CANDIDATES.push('http://localhost:18080');
+
+  var dot = document.getElementById('dot');
+  var stateEl = document.getElementById('state');
+  var cmdEl = document.getElementById('cmd');
+  var openBtn = document.getElementById('open');
+  var attempts = 0;
+
+  function setState(text, ok) {
+    stateEl.textContent = text;
+    if (ok) dot.className = 'dot ok';
+  }
+
+  function enter(base) {
+    dot.className = 'dot ok';
+    window.location.replace(base + '/?host=' + encodeURIComponent(host));
+  }
+
+  function probe(base) {
+    return fetch(base + '/api/health?_t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('bad status');
+      return base;
+    });
+  }
+
+  function tick() {
+    attempts += 1;
+    var pending = CANDIDATES.map(function (base) {
+      return probe(base).catch(function () { return null; });
+    });
+    Promise.all(pending).then(function (results) {
+      var found = results.filter(Boolean)[0];
+      if (found) {
+        setState('已连接，正在打开助手…', true);
+        enter(found);
+        return;
+      }
+      if (attempts > 40) {
+        setState('未检测到服务，请手动启动 OfficeAI 后点击下方按钮。');
+        return;
+      }
+      setState('正在检测本地服务…（第 ' + attempts + ' 次，端口 18080）');
+      setTimeout(tick, 1200);
+    });
+  }
+
+  // Show the command users can fall back to (filled in by the gateway)
+  probe(CANDIDATES[0]).then(function (base) {
+    return fetch(base + '/api/office/status?app=wps').then(function (r) { return r.json(); });
+  }).then(function (info) {
+    if (info && info.launchTarget && info.launchTarget.command) {
+      cmdEl.textContent = info.launchTarget.command;
+      cmdEl.style.display = 'block';
+      window.__officeaiTarget = info.launchTarget.command;
+    } else {
+      cmdEl.textContent = 'Start-OfficeAI.bat';
+    }
+  }).catch(function () {
+    cmdEl.textContent = 'Start-OfficeAI.bat';
+  });
+
+  openBtn.onclick = function () {
+    attempts = 0;
+    tick();
+  };
+
+  tick();
+</script>
+</body>
+</html>

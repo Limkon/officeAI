@@ -68,3 +68,43 @@ export function renderPromptTemplate(
     .replace(/\{\{selection\}\}/g, vars.selection ?? '')
     .replace(/\{\{context\}\}/g, vars.context ?? '');
 }
+
+/** Custom URL protocol used to launch the OfficeAI gateway on demand. */
+export const OFFICEAI_PROTOCOL_SCHEME = 'officeai';
+
+/**
+ * Builds the "start the gateway" deep link used by Office / WPS add-ins.
+ * Windows requires the `officeai://activate/<path>` form, where the path is
+ * URL-encoded (both the command and the query string end up encoded).
+ */
+export function buildGatewayLaunchUrl(gatewayHttpUrl: string, app?: string): string {
+  const query = app ? `?app=${encodeURIComponent(app)}` : '';
+  return `${OFFICEAI_PROTOCOL_SCHEME}://activate/${encodeURIComponent(
+    `${gatewayHttpUrl}/start${query}`
+  )}`;
+}
+
+/**
+ * Extracts the local gateway HTTP URL from a deep link like
+ * `officeai://activate/http%3A%2F%2F127.0.0.1%3A18080%2Fstart`.
+ * Returns undefined when the link is malformed or not loopback-only.
+ */
+export function parseGatewayLaunchUrl(deepLink: string): string | undefined {
+  const match = /^officeai:\/\/activate\/(.+)$/i.exec(deepLink.trim());
+  if (!match) return undefined;
+  let target: string;
+  try {
+    target = decodeURIComponent(match[1]);
+  } catch {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(target);
+    const loopback =
+      parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '[::1]';
+    if (!loopback || parsed.protocol !== 'http:') return undefined;
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return undefined;
+  }
+}
