@@ -71,9 +71,17 @@ try {
         else if (baseDir[0] === '/') baseDir = 'file://' + baseDir;
       }
       var url = baseDir + 'ui/index.html' + query;
-      // 清理双斜杠（保留 file:///）
-      url = url.replace(/(file:\/\/\/)(.*)\/\/+/g, '$1$2').replace(/([^:])\/\/+/g, '$1/');
-      url = url.replace('file:////','file:///');
+      // 修正 file:/// 前缀（避免 file://C:）并清理多余斜杠
+      if (url.indexOf('file://') === 0) {
+        url = url.replace('file:////', 'file:///');
+        if (url.indexOf('file://C:') === 0 || url.indexOf('file://c:') === 0) {
+          url = 'file:///' + url.substring(7);
+        }
+        // file:/// 后的双斜杠仅保留一处
+        var prefix = 'file:///';
+        var rest = url.substring(prefix.length).replace(/\/\/+/g, '/');
+        url = prefix + rest;
+      }
       dbg('静态 UI URL', url);
       return url;
     } catch(e) { dbg('getStaticUiUrl 失败', e.message||e); return GATEWAY_URL + '/?host=wps' + query; }
@@ -426,10 +434,29 @@ try {
   }
 
   function openDashboard() {
-    var dashUrl = USE_STATIC_UI
-      ? getStaticUiUrl('?host=wps&mode=dashboard&t=' + Date.now())
-      : GATEWAY_URL + '/dashboard';
-    dbg('openDashboard' + (USE_STATIC_UI ? ' [静态]' : ''), dashUrl);
+    var dashUrl;
+    if (USE_STATIC_UI) {
+      // 优先 http 网关（设置页在 file:// 下也可能空白），失败再 file://
+      // 这里做同步判断：若最近一次 gatewayAlive 成功则用 http，否则 file://
+      // 简化：先尝试用 http，若打不开再由用户重试 file://（getStaticUiUrl）
+      // 为兼容当前同步调用，先用 gatewayAlive 的最近结果（若无则假设存活）
+      // 实际以 openOrUpdateTaskPane 的混合策略为准：先 http
+      dashUrl = GATEWAY_URL + '/dashboard';
+      // 探测是否可用，失败则回退 file://（异步探测后若失败再开 file:// 弹窗）
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', GATEWAY_URL + '/api/health?_t=' + Date.now(), false);
+        xhr.send();
+        if (xhr.status < 200 || xhr.status >= 300) throw new Error('no gateway');
+        dbg('openDashboard [网关 http]', dashUrl);
+      } catch(e) {
+        dashUrl = getStaticUiUrl('?host=wps&mode=dashboard&t=' + Date.now());
+        dbg('openDashboard 回退 [静态 file://]', dashUrl);
+      }
+    } else {
+      dashUrl = GATEWAY_URL + '/dashboard';
+      dbg('openDashboard', dashUrl);
+    }
     var hosts = getTaskPaneHosts();
     for (var i=0;i<hosts.length;i++) {
       var h = hosts[i].obj;
@@ -446,9 +473,27 @@ try {
     var hostType = detectWpsHostType();
     dbg('ensureGatewayThen 开始', { actionId: actionId, hostType: hostType, static: USE_STATIC_UI });
     if (USE_STATIC_UI) {
-      dbg('纯静态模式，跳过网关探活，直接打开本地 file:// 侧边栏');
-      try { openOrUpdateTaskPane(actionId); } catch (e) { dbg('静态 open 失败', e.message||e); }
-      return Promise.resolve(true);
+      // 混合：优先用网关 http（避免 file:// 模块/CORS 限制），网关不存活再回退 file:// 离线包
+      dbg('静态模式：先探活网关，存活则用 http，失败再用 file://');
+      return gatewayAlive().then(function (ok) {
+        dbg('静态模式探活结果', ok);
+        if (ok) {
+          // 网关存活：用 http URL（此时 openOrUpdateTaskPane 需临时走网关）
+          var gwUrl = GATEWAY_URL + '/?host=wps&app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '') + '&t=' + Date.now();
+          dbg('网关存活，使用 http 任务窗格', gwUrl);
+          // 临时关闭静态开关调用原逻辑
+          var saved = USE_STATIC_UI;
+          USE_STATIC_UI = false;
+          try { openOrUpdateTaskPane(actionId); } catch (e) { dbg('http open 失败', e.message||e); }
+          USE_STATIC_UI = saved;
+          // 若 CreateTaskPane 仍失败，openOrUpdateTaskPane 内部会降级 ShowDialog（http）
+          return true;
+        } else {
+          dbg('网关未存活，回退 file:// 离线包');
+          try { openOrUpdateTaskPane(actionId); } catch (e) { dbg('静态 open 失败', e.message||e); }
+          return true;
+        }
+      });
     }
     // 立即预反馈（尝试所有宿主的 ShowDialog）
     try {
