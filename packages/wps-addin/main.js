@@ -1,9 +1,9 @@
 /* global wps, et, wpp, Application */
 /**
- * OfficeAI WPS 加载项（本地离线版）
- * 被安装到 %APPDATA%\kingsoft\wps\jsaddons\officeai_1.0.0\ 下，WPS 用 file:// 直接加载
- * 点击按钮时：探活 -> 未启动则 ShellExecute 拉起 OfficeAI -> 打开侧边栏
- * 安装时 __OFFICEAI_*__ 占位符会被替换为真实值
+ * OfficeAI WPS 加载项（本地离线版）- 调试增强版
+ * 安装到 %APPDATA%\kingsoft\wps\jsaddons\officeai_1.0.0\ 下
+ * 点击按钮：探活 -> 未启动则 ShellExecute 拉起 -> 打开侧边栏
+ * 全量步骤均写入 DEBUG_LOG，点“调试日志”可查看
  */
 (function () {
   var GATEWAY_URL = '__OFFICEAI_GATEWAY_URL__';
@@ -24,45 +24,69 @@
   var LAUNCH_POLL_ATTEMPTS = 36;
   var launching = false;
 
+  // ===================== 调试基础设施 =====================
+  var DEBUG_LOG = [];
+  var DEBUG_START = Date.now();
+  function dbg(msg, data) {
+    var elapsed = ((Date.now() - DEBUG_START) / 1000).toFixed(3) + 's';
+    var line = '[' + elapsed + '] ' + msg;
+    if (data !== undefined) {
+      try { line += ' | ' + (typeof data === 'string' ? data : JSON.stringify(data)); } catch (e) { line += ' | ' + String(data); }
+    }
+    DEBUG_LOG.push(line);
+    if (DEBUG_LOG.length > 300) DEBUG_LOG.shift();
+    try { console.log('[OfficeAI-WPS-DBG] ' + line); } catch (e) {}
+  }
+  function getDebugText() {
+    return 'OfficeAI WPS 调试日志\n时间: ' + new Date().toISOString() + '\n网关: ' + GATEWAY_URL + '\n启动命令: ' + (LAUNCH_COMMAND || '(空)') + '\n启动URL: ' + (LAUNCH_URL || '(空)') + '\n宿主: ' + detectWpsHostType() + '\n--- 步骤 ---\n' + DEBUG_LOG.join('\n');
+  }
+  function showDebugLog() {
+    var text = getDebugText();
+    dbg('显示调试日志');
+    var app = getApp();
+    // 优先用 ShowDialog 展示 HTML
+    try {
+      if (app && typeof app.ShowDialog === 'function') {
+        var html = '<html><head><meta charset="utf-8"><style>body{font-family:Consolas,monospace;font-size:11px;padding:16px;white-space:pre-wrap;word-break:break-all}h2{font-size:13px}button{margin-top:12px;padding:8px 16px}</style></head><body><h2>OfficeAI WPS 调试日志</h2><pre>' + text.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre><button onclick="navigator.clipboard&&navigator.clipboard.writeText(document.querySelector(\'pre\').innerText);alert(\'已复制\')">复制日志</button></body></html>';
+        var dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
+        app.ShowDialog(dataUrl, 'OfficeAI 调试日志', 900, 640, false);
+        return;
+      }
+    } catch (e) { dbg('ShowDialog 调试失败', e.message || e); }
+    try {
+      if (app && typeof app.Alert === 'function') { app.Alert(text.slice(0, 4000)); return; }
+    } catch (e) {}
+    try { alert(text.slice(0, 4000)); } catch (e) {}
+  }
+  // 全局暴露，便于控制台手动调用
+  try { window.OfficeAIDebugLog = DEBUG_LOG; window.OfficeAIShowDebug = showDebugLog; window.OfficeAIDbg = dbg; } catch (e) {}
+
+  dbg('初始化完成', { GATEWAY_URL: GATEWAY_URL, LAUNCH_COMMAND: LAUNCH_COMMAND, LAUNCH_URL: LAUNCH_URL, BOOTSTRAP_URL: BOOTSTRAP_URL, location: (typeof location !== 'undefined' ? location.href : 'unknown') });
+
+  // ===================== 宿主探测 =====================
   function getApp() {
-    if (typeof window.Application !== 'undefined' && window.Application) return window.Application;
-    if (typeof wps !== 'undefined' && wps.WpsApplication) return wps.WpsApplication();
-    if (typeof et !== 'undefined' && et.EtApplication) return et.EtApplication();
-    if (typeof wpp !== 'undefined' && wpp.WppApplication) return wpp.WppApplication();
+    var info = [];
+    if (typeof window.Application !== 'undefined' && window.Application) { info.push('Application'); return window.Application; }
+    try { if (typeof wps !== 'undefined' && wps.WpsApplication) { var a = wps.WpsApplication(); info.push('wps.WpsApplication'); dbg('getApp via wps', String(a && a.Name)); return a; } } catch (e) { dbg('getApp wps failed', e.message||e); }
+    try { if (typeof et !== 'undefined' && et.EtApplication) { var b = et.EtApplication(); info.push('et'); return b; } } catch (e) {}
+    try { if (typeof wpp !== 'undefined' && wpp.WppApplication) { var c = wpp.WppApplication(); info.push('wpp'); return c; } } catch (e) {}
+    dbg('getApp 未找到宿主', info.join(',')||'none');
     return null;
   }
 
   function detectWpsHostType() {
     var app = getApp();
-    if (!app) return 'wps-writer';
+    if (!app) { dbg('detectHost: 无 app，默认 writer'); return 'wps-writer'; }
     try {
       var name = String(app.Name || '').toLowerCase();
+      dbg('detectHost app.Name=' + name + ' has ActiveWorkbook=' + !!app.ActiveWorkbook + ' has ActivePresentation=' + !!app.ActivePresentation);
       if (name.indexOf('et') !== -1 || name.indexOf('spread') !== -1 || app.ActiveWorkbook) return 'wps-spreadsheets';
       if (name.indexOf('wpp') !== -1 || name.indexOf('present') !== -1 || app.ActivePresentation) return 'wps-presentation';
-    } catch (e) {}
+    } catch (e) { dbg('detectHost 异常', e.message||e); }
     return 'wps-writer';
   }
 
-  function log(msg) {
-    try { console.log('[OfficeAI-WPS] ' + msg); } catch (e) {}
-  }
-
-  // 立即给用户反馈：点按钮后 0ms 内弹轻提示，避免“没反应”错觉
-  function toastStarting() {
-    var app = getApp();
-    // 用 ShowDialog 做一个极简的“正在启动”浮层，400ms 后会被 launcher 覆盖
-    try {
-      if (app && typeof app.ShowDialog === 'function') {
-        var url = BOOTSTRAP_URL + '?app=' + encodeURIComponent(detectWpsHostType()) + '&toast=1';
-        // 尝试用最小尺寸的 dialog 当 toast，失败则降级为 Alert
-        // 不阻塞后续探活，独立 try/catch
-        try { app.ShowDialog(url, 'OfficeAI 正在启动', 420, 200, false); } catch (e2) {}
-      }
-    } catch (e) {}
-    log('button clicked, host=' + detectWpsHostType() + ' gateway=' + GATEWAY_URL + ' cmd=' + (LAUNCH_COMMAND || LAUNCH_URL));
-  }
-
-  // 多地址探活：依次尝试 127.0.0.1、localhost、https，任一成功即认为存活
+  // ===================== 健康检查（多候选） =====================
   function gatewayAlive() {
     var candidates = [];
     if (GATEWAY_URL) candidates.push(GATEWAY_URL);
@@ -72,35 +96,46 @@
     } else if (GATEWAY_URL.indexOf('localhost:18080') !== -1) {
       candidates.push(GATEWAY_URL.replace('localhost:18080', '127.0.0.1:18080'));
     }
-    // 去重
     var uniq = [];
     for (var i = 0; i < candidates.length; i++) if (uniq.indexOf(candidates[i]) === -1) uniq.push(candidates[i]);
     candidates = uniq;
+    dbg('gatewayAlive 开始', candidates.join(' | '));
 
     return new Promise(function (resolve) {
       var idx = 0;
       var timer = null;
       var settled = false;
-      function finish(ok) { if (settled) return; settled = true; if (timer) clearTimeout(timer); resolve(ok); }
-      timer = setTimeout(function () { finish(false); }, HEALTH_TIMEOUT_MS * Math.max(1, candidates.length));
+      function finish(ok, reason) {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        dbg('gatewayAlive 结束', (ok ? '成功' : '失败') + (reason ? ' (' + reason + ')' : ''));
+        resolve(ok);
+      }
+      timer = setTimeout(function () { finish(false, '总超时 ' + (HEALTH_TIMEOUT_MS * candidates.length) + 'ms'); }, HEALTH_TIMEOUT_MS * Math.max(1, candidates.length) + 300);
       function tryOne() {
-        if (idx >= candidates.length) { finish(false); return; }
+        if (idx >= candidates.length) { finish(false, '全部候选失败'); return; }
         var base = candidates[idx++];
+        var url = base + '/api/health?_t=' + Date.now();
         var xhr = null;
         var done = false;
-        var to = setTimeout(function () { if (!done) { try { xhr && xhr.abort(); } catch (e) {} tryOne(); } }, HEALTH_TIMEOUT_MS);
+        var to = setTimeout(function () { if (!done) { dbg('XHR 超时', url); try { xhr && xhr.abort(); } catch (e) {} tryOne(); } }, HEALTH_TIMEOUT_MS);
+        dbg('XHR 尝试', url);
         try {
           xhr = new XMLHttpRequest();
-          xhr.open('GET', base + '/api/health?_t=' + Date.now(), true);
+          xhr.open('GET', url, true);
           xhr.onreadystatechange = function () {
             if (xhr.readyState !== 4 || done) return;
             done = true;
             clearTimeout(to);
-            if (xhr.status >= 200 && xhr.status < 300) { finish(true); } else { tryOne(); }
+            var status = xhr.status;
+            var body = ''; try { body = (xhr.responseText || '').slice(0, 200); } catch (e) {}
+            dbg('XHR 响应', base + ' status=' + status + ' body=' + body);
+            if (status >= 200 && status < 300) { finish(true, base); } else { tryOne(); }
           };
-          xhr.onerror = function () { if (done) return; done = true; clearTimeout(to); tryOne(); };
+          xhr.onerror = function () { if (done) return; done = true; clearTimeout(to); dbg('XHR onerror', url); tryOne(); };
           xhr.send();
-        } catch (e) { clearTimeout(to); tryOne(); }
+        } catch (e) { clearTimeout(to); dbg('XHR 异常', e.message || e); tryOne(); }
       }
       tryOne();
     });
@@ -109,57 +144,59 @@
   function showLaunchFailed(hostType) {
     var app = getApp();
     var cmd = LAUNCH_COMMAND || LAUNCH_URL || 'OfficeAI.exe';
+    var logTail = DEBUG_LOG.slice(-80).join('\n');
     var msg =
       'OfficeAI 本地服务启动失败。\n\n' +
-      '可能原因：\n' +
-      '1. WPS 安全设置拦截了外部程序（首次会弹确认，请点“允许”）\n' +
-      '2. WPS → 设置 → 安全 → 宏/加载项被禁用\n' +
-      '3. 安装路径不存在或端口 18080 被占用\n\n' +
+      '启动命令：' + cmd + '\n网关地址：' + GATEWAY_URL + '\n宿主：' + hostType + '\n\n' +
       '请尝试：\n' +
       '• 按 Win 键搜索“OfficeAI”手动运行，然后重试按钮\n' +
       '• 重启 WPS 后再点一次\n' +
-      '• 检查開始選單是否有“OfficeAI”快捷方式\n\n' +
-      '启动命令：' + cmd + '\n网关地址：' + GATEWAY_URL;
-    try { if (app && typeof app.Alert === 'function') { app.Alert(msg); return; } } catch (e) {}
-    try { if (typeof wps !== 'undefined' && typeof wps.Alert === 'function') { wps.Alert(msg); return; } } catch (e) {}
-    try { alert(msg); } catch (e2) {}
+      '• 点功能区“调试日志”查看详细步骤并反馈\n\n' +
+      '--- 最近日志 ---\n' + logTail;
+    dbg('showLaunchFailed', msg.slice(0, 500));
+    try { if (app && typeof app.Alert === 'function') { app.Alert(msg.slice(0, 3800)); return; } } catch (e) { dbg('Alert 失败', e.message||e); }
+    try { if (typeof wps !== 'undefined' && typeof wps.Alert === 'function') { wps.Alert(msg.slice(0, 3800)); return; } } catch (e) {}
+    try { alert(msg.slice(0, 3800)); } catch (e2) {}
     try {
       if (app && typeof app.ShowDialog === 'function') {
         var fallbackUrl = BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType || 'wps-writer');
-        app.ShowDialog(fallbackUrl, 'OfficeAI 启动失败 - 手动启动指引', 760, 580, false);
+        dbg('ShowDialog fallback', fallbackUrl);
+        app.ShowDialog(fallbackUrl, 'OfficeAI 启动失败 - 调试', 760, 580, false);
       }
-    } catch (e3) {}
+    } catch (e3) { dbg('ShowDialog fallback 失败', e3.message||e3); }
   }
 
   function shellExecuteWithFallback(cmd) {
     var errs = [];
-    // 1) 直接 exe 路径
+    dbg('ShellExecute 尝试', cmd);
     try {
       if (typeof wps !== 'undefined' && wps.OAAssist && typeof wps.OAAssist.ShellExecute === 'function') {
+        dbg('尝试 wps.OAAssist.ShellExecute');
         wps.OAAssist.ShellExecute(cmd);
-        log('ShellExecute via wps.OAAssist: ' + cmd);
+        dbg('wps.OAAssist 成功');
         return true;
-      }
-    } catch (e) { errs.push('wps.OAAssist:' + (e.message || e)); }
+      } else { errs.push('wps.OAAssist 不存在'); dbg('wps.OAAssist 不存在'); }
+    } catch (e) { var m = e.message||e; errs.push('wps.OAAssist:'+m); dbg('wps.OAAssist 失败', m); }
     var app = getApp();
     try {
       if (app && app.OAAssist && typeof app.OAAssist.ShellExecute === 'function') {
+        dbg('尝试 app.OAAssist.ShellExecute');
         app.OAAssist.ShellExecute(cmd);
-        log('ShellExecute via app.OAAssist: ' + cmd);
+        dbg('app.OAAssist 成功');
         return true;
-      }
-    } catch (e) { errs.push('app.OAAssist:' + (e.message || e)); }
-    // 2) 尝试 cmd /c start 包裹（处理路径含空格）
+      } else { errs.push('app.OAAssist 不存在'); dbg('app.OAAssist 不存在'); }
+    } catch (e) { var m2 = e.message||e; errs.push('app.OAAssist:'+m2); dbg('app.OAAssist 失败', m2); }
     try {
       var quoted = cmd.indexOf(' ') !== -1 && cmd[0] !== '"' ? '"' + cmd + '"' : cmd;
       var wrapper = 'cmd.exe /c start "" ' + quoted;
+      dbg('尝试 wrapper', wrapper);
       if (typeof wps !== 'undefined' && wps.OAAssist && typeof wps.OAAssist.ShellExecute === 'function') {
         wps.OAAssist.ShellExecute(wrapper);
-        log('ShellExecute wrapper: ' + wrapper);
+        dbg('wrapper 成功');
         return true;
       }
-    } catch (e) { errs.push('wrapper:' + (e.message || e)); }
-    log('ShellExecute all failed for ' + cmd + ' errs=' + errs.join(' | '));
+    } catch (e) { var m3 = e.message||e; errs.push('wrapper:'+m3); dbg('wrapper 失败', m3); }
+    dbg('ShellExecute 全部失败', errs.join(' | '));
     return false;
   }
 
@@ -168,44 +205,42 @@
     var targetUrl = BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '');
     var cmd = LAUNCH_COMMAND;
     var url = LAUNCH_URL;
-    // 立即给用户可视反馈：弹出启动页
+    dbg('launchGateway', { cmd: cmd, url: url, targetUrl: targetUrl, hostType: hostType });
     try {
       if (app && typeof app.ShowDialog === 'function' && BOOTSTRAP_URL.indexOf('http') === 0) {
+        dbg('ShowDialog 启动页', targetUrl);
         app.ShowDialog(targetUrl, 'OfficeAI 正在启动…', 760, 560, false);
       }
-    } catch (e) {}
+    } catch (e) { dbg('ShowDialog 启动页失败', e.message||e); }
 
     var started = false;
     if (cmd) {
       started = shellExecuteWithFallback(cmd);
       if (!started && url) {
-        log('exe launch failed, trying protocol URL: ' + url);
+        dbg('exe 启动失败，尝试协议 URL');
         started = shellExecuteWithFallback(url);
       }
     } else if (url) {
       started = shellExecuteWithFallback(url);
     } else {
+      dbg('无启动命令，放弃');
       showLaunchFailed(hostType);
       return false;
     }
-
-    if (!started) {
-      log('launchGateway failed, both exe and protocol failed');
-      // 不立即弹失败，让 waitForGateway 去弹，避免重复
-    } else {
-      log('launchGateway ShellExecute dispatched, waiting for health...');
-    }
+    dbg('launchGateway 结果', started ? '已派发' : '全部失败');
     return started;
   }
 
   function waitForGateway() {
     var attempt = 0;
+    dbg('waitForGateway 开始', '最多 ' + LAUNCH_POLL_ATTEMPTS + ' 次');
     return new Promise(function (resolve) {
       function step() {
         gatewayAlive().then(function (ok) {
+          dbg('wait 轮询 #' + (attempt+1) + ' ' + (ok ? '成功' : '未就绪'));
           if (ok) return resolve(true);
           attempt += 1;
-          if (attempt >= LAUNCH_POLL_ATTEMPTS) return resolve(false);
+          if (attempt >= LAUNCH_POLL_ATTEMPTS) { dbg('waitForGateway 超时'); return resolve(false); }
           setTimeout(step, LAUNCH_POLL_MS);
         });
       }
@@ -215,81 +250,108 @@
 
   function openOrUpdateTaskPane(actionId) {
     var app = getApp();
-    if (!app) return;
+    if (!app) { dbg('openOrUpdateTaskPane 无 app'); return; }
     var hostType = detectWpsHostType();
     var targetUrl = GATEWAY_URL + '/?host=wps&app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '') + '&t=' + Date.now();
-    log('openOrUpdateTaskPane ' + targetUrl);
+    dbg('openOrUpdateTaskPane', targetUrl);
     try {
       var tsId = null;
-      if (app.PluginStorage && typeof app.PluginStorage.getItem === 'function') tsId = app.PluginStorage.getItem(TASKPANE_KEY);
+      if (app.PluginStorage && typeof app.PluginStorage.getItem === 'function') {
+        tsId = app.PluginStorage.getItem(TASKPANE_KEY);
+        dbg('PluginStorage get', String(tsId));
+      }
       if (tsId && typeof app.GetTaskPane === 'function') {
         var existingPane = app.GetTaskPane(tsId);
+        dbg('GetTaskPane', String(!!existingPane));
         if (existingPane) {
           existingPane.Visible = true;
-          if (actionId && existingPane.Navigate) existingPane.Navigate(targetUrl);
+          dbg('复用已有 pane 并显示');
+          if (actionId && existingPane.Navigate) { dbg('Navigate', targetUrl); existingPane.Navigate(targetUrl); }
           return;
         }
       }
-    } catch (e) { log('reuse pane failed: ' + e); }
+    } catch (e) { dbg('复用 pane 失败', e.message||e); }
     try {
       if (typeof app.CreateTaskPane === 'function') {
+        dbg('CreateTaskPane 尝试');
         var pane = app.CreateTaskPane(targetUrl, 'OfficeAI 智能助手');
+        dbg('CreateTaskPane 结果', String(!!pane) + (pane ? ' ID=' + pane.ID : ''));
         if (pane) {
           pane.DockPosition = 2;
           pane.Width = 400;
           pane.Visible = true;
-          if (app.PluginStorage && typeof app.PluginStorage.setItem === 'function') app.PluginStorage.setItem(TASKPANE_KEY, pane.ID);
+          dbg('pane 已显示');
+          if (app.PluginStorage && typeof app.PluginStorage.setItem === 'function') {
+            app.PluginStorage.setItem(TASKPANE_KEY, pane.ID);
+            dbg('已保存 pane ID', pane.ID);
+          }
           return;
         }
-      }
-    } catch (err) { log('CreateTaskPane failed: ' + err); }
+      } else { dbg('CreateTaskPane 不存在'); }
+    } catch (err) { dbg('CreateTaskPane 异常', err.message||err); }
     try {
-      if (typeof app.ShowDialog === 'function') app.ShowDialog(targetUrl, 'OfficeAI 智能助手', 960, 680, false);
-    } catch (e) { log('ShowDialog fallback failed: ' + e); }
+      if (typeof app.ShowDialog === 'function') {
+        dbg('ShowDialog 降级', targetUrl);
+        app.ShowDialog(targetUrl, 'OfficeAI 智能助手', 960, 680, false);
+      }
+    } catch (e) { dbg('ShowDialog 降级失败', e.message||e); }
   }
 
   function openDashboard() {
     var app = getApp();
     var dashUrl = GATEWAY_URL + '/dashboard';
-    log('openDashboard ' + dashUrl);
-    if (app && typeof app.ShowDialog === 'function') app.ShowDialog(dashUrl, 'OfficeAI 模型与集成配置中心', 1100, 760, false);
-    else openOrUpdateTaskPane('');
+    dbg('openDashboard', dashUrl);
+    if (app && typeof app.ShowDialog === 'function') { dbg('ShowDialog dashboard'); app.ShowDialog(dashUrl, 'OfficeAI 模型与集成配置中心', 1100, 760, false); }
+    else { dbg('无 ShowDialog，降级到 taskpane'); openOrUpdateTaskPane(''); }
   }
 
   function ensureGatewayThen(actionId) {
     var hostType = detectWpsHostType();
-    toastStarting();
+    dbg('ensureGatewayThen 开始', { actionId: actionId, hostType: hostType });
+    // 立即预反馈
+    try {
+      var app = getApp();
+      if (app && typeof app.ShowDialog === 'function' && BOOTSTRAP_URL.indexOf('http') === 0) {
+        var toastUrl = BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType) + '&toast=1';
+        dbg('toast ShowDialog', toastUrl);
+        try { app.ShowDialog(toastUrl, 'OfficeAI 正在启动', 420, 180, false); } catch (e) { dbg('toast 失败', e.message||e); }
+      }
+    } catch (e) {}
     return gatewayAlive().then(function (ok) {
+      dbg('首次探活结果', ok);
       if (ok) {
-        log('gateway already alive, open pane');
-        try { openOrUpdateTaskPane(actionId); } catch (e) { log('open pane failed: ' + e); }
+        dbg('网关已存活，直接打开 pane');
+        try { openOrUpdateTaskPane(actionId); } catch (e) { dbg('open pane 失败', e.message||e); }
         return true;
       }
       if (launching) {
-        try { var a = getApp(); if (a && a.Alert) a.Alert('OfficeAI 正在启动中，请稍等 2-3 秒后重试…'); } catch (e) {}
+        dbg('已在启动中，提示等待');
+        try { var a = getApp(); if (a && a.Alert) a.Alert('OfficeAI 正在启动中，请稍等 2-3 秒后重试…\n\n' + getDebugText().slice(0, 2000)); } catch (e) {}
         return false;
       }
       launching = true;
+      dbg('准备拉起网关');
       var shellOk = launchGateway(actionId, hostType);
       if (!shellOk) {
         launching = false;
+        dbg('拉起派发失败');
         showLaunchFailed(hostType);
         return false;
       }
+      dbg('等待网关就绪轮询');
       return waitForGateway().then(function (started) {
         launching = false;
+        dbg('waitForGateway 最终', started);
         if (started) {
-          log('gateway started, open pane');
-          try { openOrUpdateTaskPane(actionId); } catch (e) {}
+          try { openOrUpdateTaskPane(actionId); } catch (e) { dbg('open pane 失败', e.message||e); }
           return true;
         }
-        log('waitForGateway timeout');
         showLaunchFailed(hostType);
         return false;
       });
     }).catch(function (err) {
       launching = false;
-      log('ensureGatewayThen catch: ' + err);
+      dbg('ensureGatewayThen 异常', err.message||err);
       showLaunchFailed(detectWpsHostType());
       return false;
     });
@@ -297,37 +359,40 @@
 
   window.OnAddinLoad = function (ribbonUI) {
     window.OfficeAIRibbonUI = ribbonUI;
-    log('OnAddinLoad, gateway=' + GATEWAY_URL);
-    gatewayAlive().then(function (ok) { log('probe on load: ' + ok); });
+    dbg('OnAddinLoad', { GATEWAY_URL: GATEWAY_URL, LAUNCH_COMMAND: LAUNCH_COMMAND });
+    gatewayAlive().then(function (ok) { dbg('OnAddinLoad 探活', ok); });
     return true;
   };
   window.OnGetEnabled = function () { return true; };
-  window.GetImage = function () {
-    // 返回 http 图标，若网关未启动 WPS 会显示占位，但不影响按钮可用
+  window.GetImage = function (control) {
+    dbg('GetImage', control && control.Id);
     return GATEWAY_URL + '/wps/assets/icon-32.png';
   };
   window.OnAction = function (control) {
     try {
-      log('OnAction ' + (control && control.Id));
       var id = control && control.Id ? control.Id : 'btnOpenTaskPane';
+      dbg('OnAction 触发', id);
+      if (id === 'btnDebugLog') { showDebugLog(); return; }
       if (id === 'btnOpenDashboard') {
         ensureGatewayThen('').then(function (ok) {
-          if (ok) try { openDashboard(); } catch (e) { showLaunchFailed(detectWpsHostType()); }
+          if (ok) try { openDashboard(); } catch (e) { dbg('openDashboard 失败', e.message||e); showLaunchFailed(detectWpsHostType()); }
         }).catch(function () { showLaunchFailed(detectWpsHostType()); });
         return;
       }
       var actionMap = { btnOpenTaskPane: '', btnPolish: 'polish', btnTranslate: 'translate-en', btnSummarize: 'summarize', btnFormula: 'excel-formula', btnPptOutline: 'ppt-outline' };
       ensureGatewayThen(actionMap[id] || '').catch(function () { showLaunchFailed(detectWpsHostType()); });
     } catch (err) {
-      log('OnAction exception: ' + err);
+      dbg('OnAction 异常', err.message||err);
       showLaunchFailed(detectWpsHostType());
     }
   };
 
   window.OfficeAIBootstrap = function (hostParam) {
     var host = hostParam === 'wps' ? detectWpsHostType() : hostParam || 'standalone';
+    dbg('OfficeAIBootstrap', host);
     gatewayAlive().then(function (ok) {
-      if (ok) { window.location.replace(GATEWAY_URL + '/?host=' + encodeURIComponent(host)); return; }
+      dbg('Bootstrap 探活', ok);
+      if (ok) { dbg('Bootstrap 跳转到网关'); window.location.replace(GATEWAY_URL + '/?host=' + encodeURIComponent(host)); return; }
       var shell = document.body || document.documentElement;
       shell.setAttribute('style', 'margin:0;font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;background:#f8fafc;color:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;');
       shell.innerHTML =
@@ -336,18 +401,21 @@
         '<h1 style="font-size:17px;margin:0 0 8px">OfficeAI 服务未启动</h1>' +
         '<p style="font-size:13px;line-height:1.7;color:#475569;margin:0 0 14px">点击下方按钮会在需要时自动拉起 OfficeAI 本地服务，随后自动进入助手。</p>' +
         '<button id="officeai-start" style="width:100%;border:0;border-radius:10px;padding:11px 14px;font-size:14px;font-weight:600;color:#fff;background:#2563eb;cursor:pointer">一键启动 OfficeAI</button>' +
-        '<div id="officeai-state" style="font-size:12px;color:#64748b;margin-top:12px"></div>' +
+        '<div id="officeai-state" style="font-size:12px;color:#64748b;margin-top:12px;white-space:pre-wrap;max-height:160px;overflow:auto"></div>' +
+        '<pre id="officeai-log" style="font-size:10px;background:#0f172a;color:#e2e8f0;padding:8px;border-radius:8px;max-height:140px;overflow:auto;margin-top:10px">' + DEBUG_LOG.slice(-40).join('\n').replace(/</g,'&lt;') + '</pre>' +
         '<p style="font-size:11px;color:#94a3b8;margin-top:12px">启动命令：' + (LAUNCH_COMMAND || LAUNCH_URL || 'OfficeAI.exe') + '<br>网关：' + GATEWAY_URL + '</p>' +
         '</div></div>';
       var stateEl = document.getElementById('officeai-state');
-      function setState(t) { if (stateEl) stateEl.textContent = t; }
+      function setState(t) { if (stateEl) stateEl.textContent = t; dbg('Bootstrap setState', t); }
       var btn = document.getElementById('officeai-start');
       if (btn) btn.onclick = function () {
+        dbg('Bootstrap 点击一键启动');
         setState('正在唤起 OfficeAI…');
         launchGateway('', host);
         waitForGateway().then(function (started) {
+          dbg('Bootstrap wait 结果', started);
           if (started) window.location.replace(GATEWAY_URL + '/?host=' + encodeURIComponent(host));
-          else setState('仍未能启动。请从开始菜单运行「OfficeAI」后重试。' + (LAUNCH_COMMAND ? '（' + LAUNCH_COMMAND + '）' : ''));
+          else setState('仍未能启动。请从开始菜单运行「OfficeAI」后重试。' + (LAUNCH_COMMAND ? '（' + LAUNCH_COMMAND + '）' : '') + '\n\n' + DEBUG_LOG.slice(-20).join('\n'));
         });
       };
       setState('');
