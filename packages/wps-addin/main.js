@@ -41,6 +41,43 @@ try {
   var LAUNCH_POLL_MS = 1000;
   var LAUNCH_POLL_ATTEMPTS = 36;
   var launching = false;
+  // 纯静态 UI：完全脱离 127.0.0.1，任务窗格走 file:// 本地离线包（参考 it235 的 VSTO 无网关直连）
+  var USE_STATIC_UI = true;
+  function getStaticUiUrl(query) {
+    try {
+      // 优先用 wps.GetUrlPath()（WPS 标准），否则用 location.href 推导
+      var baseDir = '';
+      try {
+        if (typeof wps !== 'undefined' && wps && typeof wps.GetUrlPath === 'function') {
+          var gp = wps.GetUrlPath();
+          if (gp) {
+            baseDir = gp;
+            if (baseDir.slice(-1) !== '/' && baseDir.slice(-1) !== '\\') baseDir += '/';
+            dbg('GetUrlPath', baseDir);
+          }
+        }
+      } catch(e) { dbg('GetUrlPath 失败', e.message||e); }
+      if (!baseDir) {
+        var loc = (typeof location !== 'undefined' && location.href) ? location.href : '';
+        if (loc) {
+          baseDir = loc.substring(0, loc.lastIndexOf('/')+1);
+          dbg('location 推导 baseDir', baseDir);
+        }
+      }
+      if (!baseDir) baseDir = 'file:///C:/Users/Public/OfficeAI/';
+      // 统一为 file:/// 前缀
+      if (baseDir.indexOf('file://') !== 0 && baseDir.indexOf('http') !== 0) {
+        if (baseDir.match(/^[A-Za-z]:/)) baseDir = 'file:///' + baseDir.replace(/\\/g,'/');
+        else if (baseDir[0] === '/') baseDir = 'file://' + baseDir;
+      }
+      var url = baseDir + 'ui/index.html' + query;
+      // 清理双斜杠（保留 file:///）
+      url = url.replace(/(file:\/\/\/)(.*)\/\/+/g, '$1$2').replace(/([^:])\/\/+/g, '$1/');
+      url = url.replace('file:////','file:///');
+      dbg('静态 UI URL', url);
+      return url;
+    } catch(e) { dbg('getStaticUiUrl 失败', e.message||e); return GATEWAY_URL + '/?host=wps' + query; }
+  }
 
   // ===================== 调试基础设施 =====================
   var DEBUG_LOG = [];
@@ -308,8 +345,10 @@ try {
 
   function openOrUpdateTaskPane(actionId) {
     var hostType = detectWpsHostType();
-    var targetUrl = GATEWAY_URL + '/?host=wps&app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '') + '&t=' + Date.now();
-    dbg('openOrUpdateTaskPane', targetUrl);
+    var targetUrl = USE_STATIC_UI
+      ? getStaticUiUrl('?host=wps&app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '') + '&t=' + Date.now())
+      : GATEWAY_URL + '/?host=wps&app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '') + '&t=' + Date.now();
+    dbg('openOrUpdateTaskPane' + (USE_STATIC_UI ? ' [静态 file://]' : ' [网关]'), targetUrl);
     var hosts = getTaskPaneHosts();
     dbgHosts('可用宿主', hosts);
     // 1) 尝试复用已有 pane（遍历所有宿主的 PluginStorage / GetTaskPane）
@@ -387,8 +426,10 @@ try {
   }
 
   function openDashboard() {
-    var dashUrl = GATEWAY_URL + '/dashboard';
-    dbg('openDashboard', dashUrl);
+    var dashUrl = USE_STATIC_UI
+      ? getStaticUiUrl('?host=wps&mode=dashboard&t=' + Date.now())
+      : GATEWAY_URL + '/dashboard';
+    dbg('openDashboard' + (USE_STATIC_UI ? ' [静态]' : ''), dashUrl);
     var hosts = getTaskPaneHosts();
     for (var i=0;i<hosts.length;i++) {
       var h = hosts[i].obj;
@@ -403,7 +444,12 @@ try {
 
   function ensureGatewayThen(actionId) {
     var hostType = detectWpsHostType();
-    dbg('ensureGatewayThen 开始', { actionId: actionId, hostType: hostType });
+    dbg('ensureGatewayThen 开始', { actionId: actionId, hostType: hostType, static: USE_STATIC_UI });
+    if (USE_STATIC_UI) {
+      dbg('纯静态模式，跳过网关探活，直接打开本地 file:// 侧边栏');
+      try { openOrUpdateTaskPane(actionId); } catch (e) { dbg('静态 open 失败', e.message||e); }
+      return Promise.resolve(true);
+    }
     // 立即预反馈（尝试所有宿主的 ShowDialog）
     try {
       if (BOOTSTRAP_URL.indexOf('http') === 0) {
