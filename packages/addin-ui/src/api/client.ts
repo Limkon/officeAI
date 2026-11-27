@@ -26,19 +26,31 @@ export interface IntegrationResult {
 
 const API_BASE = '';
 
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${url}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {})
+async function requestJson<T>(url: string, init?: RequestInit, timeoutMs = 8000): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE}${url}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(init?.headers ?? {})
+      }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((data as { error?: string; message?: string }).error || (data as { message?: string }).message || `HTTP ${res.status}`);
     }
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((data as { error?: string; message?: string }).error || `HTTP ${res.status}`);
+    return data as T;
+  } catch (err) {
+    if ((err as Error).name === 'AbortError') {
+      throw new Error(`请求超时（${timeoutMs}ms）：${url}，请检查本地网关是否运行（端口 18080/18443）`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  return data as T;
 }
 
 export const apiClient = {

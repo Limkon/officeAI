@@ -287,10 +287,8 @@ export class WindowsOfficeIntegrator {
       };
     }
 
+    // 1) 首选 certutil：-user -addstore Root，无需管理员、无弹窗，最可靠
     try {
-      // 用 certutil 无交互导入。Import-Certificate 导入受信任根证书会弹确认框，
-      // 在 -NonInteractive 模式下必然失败（且此前被静默吞掉，导致"安装成功"假象）。
-      // certutil -user -addstore Root 直接写入当前用户根证书存储：无需管理员、无弹窗。
       await execFileAsync('certutil.exe', ['-user', '-addstore', 'Root', this.certPath], {
         timeout: 15000
       });
@@ -298,11 +296,29 @@ export class WindowsOfficeIntegrator {
         ok: true,
         message: '已成功将本地 HTTPS 证书信任到当前用户根证书存储 (Cert:\\CurrentUser\\Root)。'
       };
-    } catch (err) {
-      return {
-        ok: false,
-        message: `导入证书失败: ${err instanceof Error ? err.message : String(err)}`
-      };
+    } catch (certUtilErr) {
+      // 2) 回退尝试 PowerShell Import-Certificate（部分系统 certutil 被策略拦截）
+      try {
+        const psScript =
+          `$c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('${this.certPath.replace(/'/g, "''")}');` +
+          `Import-Certificate -FilePath '${this.certPath.replace(/'/g, "''")}' -CertStoreLocation Cert:\\CurrentUser\\Root | Out-Null;` +
+          `'TRUSTED'`;
+        const { stdout } = await this.runPowerShell(psScript);
+        if (stdout.includes('TRUSTED')) {
+          return {
+            ok: true,
+            message: '已通过 PowerShell 将本地 HTTPS 证书信任到当前用户根证书存储 (Cert:\\CurrentUser\\Root)。'
+          };
+        }
+        throw new Error(stdout.trim() || 'Import-Certificate 未返回 TRUSTED');
+      } catch (psErr) {
+        const m1 = certUtilErr instanceof Error ? certUtilErr.message : String(certUtilErr);
+        const m2 = psErr instanceof Error ? psErr.message : String(psErr);
+        return {
+          ok: false,
+          message: `证书信任失败：certutil 失败(${m1}); PowerShell 备用也失败(${m2})。请手动以管理员打开 PowerShell 执行: certutil -user -addstore Root "${this.certPath}"`
+        };
+      }
     }
   }
 
