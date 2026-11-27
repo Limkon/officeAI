@@ -391,13 +391,9 @@ export class WindowsOfficeIntegrator {
     const certRes = await this.trustLocalCertificate();
     details.push(certRes.message);
     if (!certRes.ok) {
-      // 证书未信任时 Office 加载项无法加载（WebView2 会拦截），必须如实报错，
-      // 不能再返回"安装成功"。
-      return {
-        ok: false,
-        message: `证书信任失败，Office 加载项无法加载：${certRes.message}`,
-        details
-      };
+      // Manifest 现已默认走 http://127.0.0.1:18080（无需证书），证书仅为 https 备用，
+      // 失败不应阻塞 Office 按钮安装，否则会出现“Office里没有按钮”且 installAll 整体失败。
+      details.push(`证书备用信任失败（已改用 http，不影响加载）：${certRes.message}`);
     }
 
     try {
