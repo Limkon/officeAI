@@ -6,6 +6,10 @@ import { promisify } from 'node:util';
 import { buildGatewayLaunchUrl, type WindowsOfficeStatus } from '@officeai/shared';
 import { ensureLocalhostCert } from '../certs.js';
 import { detectOfficeProcesses, type OfficeProcessState } from '../process-watch.js';
+import {
+  createLauncherShortcut,
+  registerProtocolHandler
+} from '../desktop-tools.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -592,6 +596,25 @@ export class WindowsOfficeIntegrator {
     details.push(...(wps.details ?? []));
     const waker = await this.installOfficeWaker();
     details.push(...(waker.details ?? []));
+
+    // 注册 officeai:// 协议与一键启动快捷方式，保障 WPS 按钮的 LAUNCH_URL 兜底也能拉起
+    // （之前 installAll 未包含此步，导致占位符回落到 officeai:// 时 ShellExecute 找不到处理器而静默失败）
+    if (this.isWindows && this.launchCommand) {
+      try {
+        const reg = await registerProtocolHandler(this.launchCommand);
+        details.push(reg.message);
+        if (reg.ok) {
+          const shortcut = await createLauncherShortcut(
+            buildGatewayLaunchUrl(`http://127.0.0.1:${this.httpPort}`, 'wps')
+          );
+          details.push(shortcut.message);
+        }
+      } catch (err) {
+        details.push(`协议/快捷方式注册跳过: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (!this.launchCommand) {
+      details.push('未检测到 OfficeAI 启动程序，已跳过 officeai:// 协议注册（WPS 将尝试直接用 exe 路径启动）');
+    }
 
     const ok = office.ok && wps.ok && waker.ok;
     return {

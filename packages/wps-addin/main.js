@@ -27,9 +27,9 @@
   }
 
   var TASKPANE_KEY = 'officeai_taskpane_id';
-  var HEALTH_TIMEOUT_MS = 900;
+  var HEALTH_TIMEOUT_MS = 1500;
   var LAUNCH_POLL_MS = 1200;
-  var LAUNCH_POLL_ATTEMPTS = 25;
+  var LAUNCH_POLL_ATTEMPTS = 30;
   var launching = false;
 
   // ---------------------------------------------------------------- host API
@@ -104,6 +104,41 @@
     });
   }
 
+  function showLaunchFailed(hostType) {
+    var app = getApp();
+    var cmd = LAUNCH_COMMAND || LAUNCH_URL || 'OfficeAI.exe';
+    var msg =
+      'OfficeAI 本地服务启动失败。\n\n' +
+      '可能原因：\n' +
+      '1. WPS 安全设置拦截了外部程序启动（首次会弹一次确认，请点“允许”）\n' +
+      '2. 安装路径不存在或端口 18080 被占用\n\n' +
+      '请尝试：\n' +
+      '• 手动启动：按 Win 键搜索“OfficeAI”运行，然后重试按钮\n' +
+      '• 重启 WPS 后再点一次\n' +
+      '• 检查 Office 面板 → 配置中心 → 运行状态\n\n' +
+      '启动命令：' + cmd + '\n网关地址：' + GATEWAY_URL;
+    try {
+      if (app && typeof app.Alert === 'function') {
+        app.Alert(msg);
+        return;
+      }
+      if (typeof wps !== 'undefined' && typeof wps.Alert === 'function') {
+        wps.Alert(msg);
+        return;
+      }
+    } catch (e) {}
+    try {
+      alert(msg);
+    } catch (e2) {}
+    // 兜底：仍尝试用 ShowDialog 打开引导页，方便用户一键重试（即使网关未启动，也能看到本地 launcher 的重试逻辑）
+    try {
+      if (app && typeof app.ShowDialog === 'function') {
+        var fallbackUrl = BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType || 'wps-writer');
+        app.ShowDialog(fallbackUrl, 'OfficeAI 启动失败', 760, 520, false);
+      }
+    } catch (e3) {}
+  }
+
   /**
    * Starts the OfficeAI client. WPS shows a one-time security prompt the first
    * time an add-in executes an external program, so we open the gateway's
@@ -115,41 +150,60 @@
     var app = getApp();
     var targetUrl =
       BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '');
+    var cmd = LAUNCH_COMMAND || LAUNCH_URL;
     var started = false;
+    var lastErr = '';
+
+    if (!cmd) {
+      // 未能解析到启动命令时，直接提示用户手动启动，避免静默无响应
+      showLaunchFailed(hostType);
+      return false;
+    }
 
     try {
       if (typeof wps !== 'undefined' && wps.OAAssist && typeof wps.OAAssist.ShellExecute === 'function') {
-        wps.OAAssist.ShellExecute(LAUNCH_COMMAND || LAUNCH_URL);
+        wps.OAAssist.ShellExecute(cmd);
         started = true;
       }
     } catch (e) {
+      lastErr = String(e && e.message ? e.message : e);
       started = false;
     }
 
     if (!started && app && app.OAAssist) {
       try {
-        app.OAAssist.ShellExecute(LAUNCH_COMMAND || LAUNCH_URL);
+        app.OAAssist.ShellExecute(cmd);
         started = true;
       } catch (e) {
+        lastErr = String(e && e.message ? e.message : e);
         started = false;
       }
     }
 
+    // 即使 ShellExecute 返回成功，也给用户一个可视的“正在启动”反馈，避免“点了没反应”错觉
     setTimeout(function () {
       try {
-        if (app && typeof app.ShowDialog === 'function') {
+        if (app && typeof app.ShowDialog === 'function' && GATEWAY_URL.indexOf('http') === 0) {
+          // 只有网关地址是 http 时才尝试打开引导页；file:// 场景下由 waitForGateway 后的逻辑负责
           app.ShowDialog(
             targetUrl,
-            'OfficeAI 正在启动',
+            started ? 'OfficeAI 正在启动' : 'OfficeAI 启动中',
             760,
             560,
             false
           );
+        } else if (!started) {
+          showLaunchFailed(hostType);
         }
       } catch (e) {
-        // ignore
+        if (!started) showLaunchFailed(hostType);
       }
-    }, 400);
+    }, started ? 400 : 0);
+
+    if (!started && lastErr) {
+      // 记录到控制台，方便在 WPS 开发者工具中排查
+      try { console.log('[OfficeAI] ShellExecute 失败:', lastErr, 'cmd:', cmd); } catch {}
+    }
 
     return started;
   }
@@ -240,20 +294,38 @@
     var hostType = detectWpsHostType();
     return gatewayAlive().then(function (ok) {
       if (ok) {
-        openOrUpdateTaskPane(actionId);
+        try { openOrUpdateTaskPane(actionId); } catch (e) { try{ console.log('[OfficeAI] open pane failed', e);}catch{} }
         return true;
       }
-      if (launching) return false;
+      if (launching) {
+        // 正在启动中，避免重复 ShellExecute，但也要给用户反馈
+        try {
+          var appTmp = getApp();
+          if (appTmp && appTmp.Alert) appTmp.Alert('OfficeAI 正在启动中，请稍等 2-3 秒后重试…');
+        } catch {}
+        return false;
+      }
       launching = true;
-      launchGateway(actionId, hostType);
+      var shellOk = launchGateway(actionId, hostType);
+      if (!shellOk) {
+        launching = false;
+        showLaunchFailed(hostType);
+        return false;
+      }
       return waitForGateway().then(function (started) {
         launching = false;
         if (started) {
-          openOrUpdateTaskPane(actionId);
+          try { openOrUpdateTaskPane(actionId); } catch (e) {}
           return true;
         }
+        showLaunchFailed(hostType);
         return false;
       });
+    }).catch(function (err) {
+      launching = false;
+      try { console.log('[OfficeAI] ensureGatewayThen 异常', err); } catch {}
+      showLaunchFailed(detectWpsHostType());
+      return false;
     });
   }
 
@@ -274,24 +346,32 @@
   };
 
   window.OnAction = function (control) {
-    var id = control && control.Id ? control.Id : 'btnOpenTaskPane';
-    if (id === 'btnOpenDashboard') {
-      ensureGatewayThen('').then(function (ok) {
-        if (ok) openDashboard();
-      });
-      return;
+    try {
+      var id = control && control.Id ? control.Id : 'btnOpenTaskPane';
+      if (id === 'btnOpenDashboard') {
+        ensureGatewayThen('').then(function (ok) {
+          if (ok) {
+            try { openDashboard(); } catch (e) { showLaunchFailed(detectWpsHostType()); }
+          }
+          // 失败时 ensureGatewayThen 内部已弹框，此处不再静默
+        }).catch(function(){ showLaunchFailed(detectWpsHostType()); });
+        return;
+      }
+
+      var actionMap = {
+        btnOpenTaskPane: '',
+        btnPolish: 'polish',
+        btnTranslate: 'translate-en',
+        btnSummarize: 'summarize',
+        btnFormula: 'excel-formula',
+        btnPptOutline: 'ppt-outline'
+      };
+
+      ensureGatewayThen(actionMap[id] || '').catch(function(){ showLaunchFailed(detectWpsHostType()); });
+    } catch (err) {
+      try { console.log('[OfficeAI] OnAction 异常', err); } catch {}
+      showLaunchFailed(detectWpsHostType());
     }
-
-    var actionMap = {
-      btnOpenTaskPane: '',
-      btnPolish: 'polish',
-      btnTranslate: 'translate-en',
-      btnSummarize: 'summarize',
-      btnFormula: 'excel-formula',
-      btnPptOutline: 'ppt-outline'
-    };
-
-    ensureGatewayThen(actionMap[id] || '');
   };
 
   /**
