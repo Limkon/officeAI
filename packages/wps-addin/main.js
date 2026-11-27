@@ -83,13 +83,43 @@ try {
 
   // ===================== 宿主探测 =====================
   function getApp() {
+    // JS 插件的文档对象：优先返回 Window/Application，再回退到 wps.WpsApplication 的 COM 对象
+    // 注意：CreateTaskPane / ShowDialog / PluginStorage 并不在 WpsApplication 上，而在 wps / Application 全局上
+    try { if (typeof Application !== 'undefined' && Application) return Application; } catch(e){}
     var info = [];
-    if (typeof window.Application !== 'undefined' && window.Application) { info.push('Application'); return window.Application; }
-    try { if (typeof wps !== 'undefined' && wps.WpsApplication) { var a = wps.WpsApplication(); info.push('wps.WpsApplication'); dbg('getApp via wps', String(a && a.Name)); return a; } } catch (e) { dbg('getApp wps failed', e.message||e); }
+    if (typeof window !== 'undefined' && typeof window.Application !== 'undefined' && window.Application) { info.push('window.Application'); return window.Application; }
+    try { if (typeof wps !== 'undefined' && wps.WpsApplication) { var a = wps.WpsApplication(); info.push('wps.WpsApplication'); try{ dbg('getApp via wps', String(a && a.Name)); }catch(e){} return a; } } catch (e) { dbg('getApp wps failed', e.message||e); }
     try { if (typeof et !== 'undefined' && et.EtApplication) { var b = et.EtApplication(); info.push('et'); return b; } } catch (e) {}
     try { if (typeof wpp !== 'undefined' && wpp.WppApplication) { var c = wpp.WppApplication(); info.push('wpp'); return c; } } catch (e) {}
     dbg('getApp 未找到宿主', info.join(',')||'none');
     return null;
+  }
+  // 兼容 WPS 标准示例：wps.CreateTaskPane / wps.ShowDialog / Application.CreateTaskPane
+  function getTaskPaneHosts() {
+    var list = [];
+    var seen = {};
+    function push(o, name) {
+      if (!o) return;
+      var key = name + ':' + (o === __OA_G ? 'g' : String(o));
+      if (seen[key]) return;
+      seen[key]=1;
+      list.push({ obj: o, name: name });
+    }
+    try { if (typeof wps !== 'undefined' && wps) push(wps, 'wps'); } catch(e){}
+    try { if (typeof Application !== 'undefined' && Application) push(Application, 'Application'); } catch(e){}
+    try { if (typeof window !== 'undefined' && window.wps) push(window.wps, 'window.wps'); } catch(e){}
+    try { if (typeof window !== 'undefined' && window.Application) push(window.Application, 'window.Application'); } catch(e){}
+    try { if (typeof self !== 'undefined' && self.wps) push(self.wps, 'self.wps'); } catch(e){}
+    try { var a = getApp(); if (a) push(a, 'getApp()'); } catch(e){}
+    // 某些 WPS 版本把 API 挂在 __OA_G
+    try { if (__OA_G && __OA_G.wps) push(__OA_G.wps, '__OA_G.wps'); } catch(e){}
+    return list;
+  }
+  function dbgHosts(tag, hosts) {
+    try {
+      var s = hosts.map(function(h){ var hasCT = !!(h.obj && typeof h.obj.CreateTaskPane === 'function'); var hasSD = !!(h.obj && typeof h.obj.ShowDialog === 'function'); var hasPS = !!(h.obj && h.obj.PluginStorage); return h.name + (hasCT?'[CT]':'') + (hasSD?'[SD]':'') + (hasPS?'[PS]':''); }).join(', ');
+      dbg(tag, s || 'none');
+    } catch(e){}
   }
 
   function detectWpsHostType() {
@@ -176,10 +206,14 @@ try {
     try { if (typeof wps !== 'undefined' && typeof wps.Alert === 'function') { wps.Alert(msg.slice(0, 3800)); return; } } catch (e) {}
     try { alert(msg.slice(0, 3800)); } catch (e2) {}
     try {
-      if (app && typeof app.ShowDialog === 'function') {
-        var fallbackUrl = BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType || 'wps-writer');
-        dbg('ShowDialog fallback', fallbackUrl);
-        app.ShowDialog(fallbackUrl, 'OfficeAI 启动失败 - 调试', 760, 580, false);
+      var fallbackUrl = BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType || 'wps-writer');
+      var hs2 = getTaskPaneHosts();
+      for (var jj=0; jj<hs2.length; jj++) {
+        var hh3 = hs2[jj].obj;
+        if (hh3 && typeof hh3.ShowDialog === 'function') {
+          dbg('ShowDialog fallback @'+hs2[jj].name, fallbackUrl);
+          try { hh3.ShowDialog(fallbackUrl, 'OfficeAI 启动失败 - 调试', 760, 580, false); break; } catch(e){ dbg('ShowDialog fallback 失败 @'+hs2[jj].name, e.message||e); }
+        }
       }
     } catch (e3) { dbg('ShowDialog fallback 失败', e3.message||e3); }
   }
@@ -225,9 +259,15 @@ try {
     var url = LAUNCH_URL;
     dbg('launchGateway', { cmd: cmd, url: url, targetUrl: targetUrl, hostType: hostType });
     try {
-      if (app && typeof app.ShowDialog === 'function' && BOOTSTRAP_URL.indexOf('http') === 0) {
-        dbg('ShowDialog 启动页', targetUrl);
-        app.ShowDialog(targetUrl, 'OfficeAI 正在启动…', 760, 560, false);
+      if (BOOTSTRAP_URL.indexOf('http') === 0) {
+        var hs = getTaskPaneHosts();
+        for (var ii=0; ii<hs.length; ii++) {
+          var hh2 = hs[ii].obj;
+          if (hh2 && typeof hh2.ShowDialog === 'function') {
+            dbg('ShowDialog 启动页 @'+hs[ii].name, targetUrl);
+            try { hh2.ShowDialog(targetUrl, 'OfficeAI 正在启动…', 760, 560, false); break; } catch(e){ dbg('ShowDialog 启动页失败 @'+hs[ii].name, e.message||e); }
+          }
+        }
       }
     } catch (e) { dbg('ShowDialog 启动页失败', e.message||e); }
 
@@ -267,72 +307,115 @@ try {
   }
 
   function openOrUpdateTaskPane(actionId) {
-    var app = getApp();
-    if (!app) { dbg('openOrUpdateTaskPane 无 app'); return; }
     var hostType = detectWpsHostType();
     var targetUrl = GATEWAY_URL + '/?host=wps&app=' + encodeURIComponent(hostType) + (actionId ? '&action=' + encodeURIComponent(actionId) : '') + '&t=' + Date.now();
     dbg('openOrUpdateTaskPane', targetUrl);
-    try {
-      var tsId = null;
-      if (app.PluginStorage && typeof app.PluginStorage.getItem === 'function') {
-        tsId = app.PluginStorage.getItem(TASKPANE_KEY);
-        dbg('PluginStorage get', String(tsId));
-      }
-      if (tsId && typeof app.GetTaskPane === 'function') {
-        var existingPane = app.GetTaskPane(tsId);
-        dbg('GetTaskPane', String(!!existingPane));
-        if (existingPane) {
-          existingPane.Visible = true;
-          dbg('复用已有 pane 并显示');
-          if (actionId && existingPane.Navigate) { dbg('Navigate', targetUrl); existingPane.Navigate(targetUrl); }
-          return;
-        }
-      }
-    } catch (e) { dbg('复用 pane 失败', e.message||e); }
-    try {
-      if (typeof app.CreateTaskPane === 'function') {
-        dbg('CreateTaskPane 尝试');
-        var pane = app.CreateTaskPane(targetUrl, 'OfficeAI 智能助手');
-        dbg('CreateTaskPane 结果', String(!!pane) + (pane ? ' ID=' + pane.ID : ''));
-        if (pane) {
-          pane.DockPosition = 2;
-          pane.Width = 400;
-          pane.Visible = true;
-          dbg('pane 已显示');
-          if (app.PluginStorage && typeof app.PluginStorage.setItem === 'function') {
-            app.PluginStorage.setItem(TASKPANE_KEY, pane.ID);
-            dbg('已保存 pane ID', pane.ID);
+    var hosts = getTaskPaneHosts();
+    dbgHosts('可用宿主', hosts);
+    // 1) 尝试复用已有 pane（遍历所有宿主的 PluginStorage / GetTaskPane）
+    for (var hi=0; hi<hosts.length; hi++) {
+      var h = hosts[hi].obj;
+      var hname = hosts[hi].name;
+      try {
+        if (h && h.PluginStorage && typeof h.PluginStorage.getItem === 'function') {
+          var tsId = h.PluginStorage.getItem(TASKPANE_KEY);
+          if (tsId) {
+            dbg('PluginStorage get @'+hname, String(tsId));
+            if (typeof h.GetTaskPane === 'function') {
+              var existingPane = h.GetTaskPane(tsId);
+              dbg('GetTaskPane @'+hname, String(!!existingPane));
+              if (existingPane) {
+                try { existingPane.Visible = true; } catch(e){}
+                dbg('复用已有 pane 并显示 @'+hname);
+                if (actionId && existingPane.Navigate) { try{ dbg('Navigate @'+hname, targetUrl); existingPane.Navigate(targetUrl); }catch(e){ dbg('Navigate 失败 @'+hname, e.message||e); } }
+                return;
+              }
+            }
           }
+        }
+      } catch (e) { dbg('复用 pane 失败 @'+hname, e.message||e); }
+    }
+    // 2) 尝试新建 CreateTaskPane（按优先级遍历）
+    for (var ci=0; ci<hosts.length; ci++) {
+      var hh = hosts[ci].obj;
+      var nn = hosts[ci].name;
+      try {
+        if (hh && typeof hh.CreateTaskPane === 'function') {
+          dbg('CreateTaskPane 尝试 @'+nn, targetUrl);
+          var pane = hh.CreateTaskPane(targetUrl);
+          // 部分 WPS 版本需要第二个参数标题，部分不需要；兼容两种
+          if (!pane && typeof hh.CreateTaskPane === 'function') {
+            try { pane = hh.CreateTaskPane(targetUrl, 'OfficeAI 智能助手'); } catch(e){}
+          }
+          dbg('CreateTaskPane 结果 @'+nn, String(!!pane) + (pane ? ' ID=' + (pane.ID||pane.Id||'') : ''));
+          if (pane) {
+            try { pane.DockPosition = 2; } catch(e){}
+            try { pane.Width = 400; } catch(e){}
+            try { pane.Visible = true; } catch(e){}
+            dbg('pane 已显示 @'+nn);
+            for (var pi=0; pi<hosts.length; pi++) {
+              var ph = hosts[pi].obj;
+              try { if (ph && ph.PluginStorage && typeof ph.PluginStorage.setItem === 'function') { ph.PluginStorage.setItem(TASKPANE_KEY, pane.ID||pane.Id); dbg('已保存 pane ID @'+hosts[pi].name, pane.ID||pane.Id); break; } } catch(e){}
+            }
+            return;
+          }
+        } else {
+          dbg('CreateTaskPane 不存在 @'+nn);
+        }
+      } catch (err) { dbg('CreateTaskPane 异常 @'+nn, err.message||err); }
+    }
+    // 3) 降级 ShowDialog（遍历）
+    for (var di=0; di<hosts.length; di++) {
+      var dh = hosts[di].obj;
+      var dn = hosts[di].name;
+      try {
+        if (dh && typeof dh.ShowDialog === 'function') {
+          dbg('ShowDialog 降级 @'+dn, targetUrl);
+          dh.ShowDialog(targetUrl, 'OfficeAI 智能助手', 960, 680, false);
+          dbg('ShowDialog 已调用 @'+dn);
           return;
         }
-      } else { dbg('CreateTaskPane 不存在'); }
-    } catch (err) { dbg('CreateTaskPane 异常', err.message||err); }
+      } catch (e) { dbg('ShowDialog 降级失败 @'+dn, e.message||e); }
+    }
+    dbg('所有方式均失败，弹窗提示');
     try {
-      if (typeof app.ShowDialog === 'function') {
-        dbg('ShowDialog 降级', targetUrl);
-        app.ShowDialog(targetUrl, 'OfficeAI 智能助手', 960, 680, false);
-      }
-    } catch (e) { dbg('ShowDialog 降级失败', e.message||e); }
+      var allNames = hosts.map(function(x){return x.name}).join(', ');
+      var msg = 'OfficeAI 侧边栏创建失败：\nCreateTaskPane / ShowDialog 在当前宿主上均不可用。\n宿主：'+hostType+'\n可用宿主：'+allNames+'\n\n请重启 WPS 后重试，或点"调试日志"反馈。\n网关：'+GATEWAY_URL+'\n地址：'+targetUrl;
+      if (typeof wps !== 'undefined' && wps && typeof wps.Alert === 'function') wps.Alert(msg);
+      else if (typeof alert !== 'undefined') alert(msg);
+    } catch(e){}
   }
 
   function openDashboard() {
-    var app = getApp();
     var dashUrl = GATEWAY_URL + '/dashboard';
     dbg('openDashboard', dashUrl);
-    if (app && typeof app.ShowDialog === 'function') { dbg('ShowDialog dashboard'); app.ShowDialog(dashUrl, 'OfficeAI 模型与集成配置中心', 1100, 760, false); }
-    else { dbg('无 ShowDialog，降级到 taskpane'); openOrUpdateTaskPane(''); }
+    var hosts = getTaskPaneHosts();
+    for (var i=0;i<hosts.length;i++) {
+      var h = hosts[i].obj;
+      if (h && typeof h.ShowDialog === 'function') {
+        dbg('ShowDialog dashboard @'+hosts[i].name, dashUrl);
+        try { h.ShowDialog(dashUrl, 'OfficeAI 模型与集成配置中心', 1100, 760, false); return; } catch(e){ dbg('ShowDialog dashboard 失败 @'+hosts[i].name, e.message||e); }
+      }
+    }
+    dbg('无 ShowDialog，降级到 taskpane');
+    openOrUpdateTaskPane('');
   }
 
   function ensureGatewayThen(actionId) {
     var hostType = detectWpsHostType();
     dbg('ensureGatewayThen 开始', { actionId: actionId, hostType: hostType });
-    // 立即预反馈
+    // 立即预反馈（尝试所有宿主的 ShowDialog）
     try {
-      var app = getApp();
-      if (app && typeof app.ShowDialog === 'function' && BOOTSTRAP_URL.indexOf('http') === 0) {
+      if (BOOTSTRAP_URL.indexOf('http') === 0) {
         var toastUrl = BOOTSTRAP_URL + '?app=' + encodeURIComponent(hostType) + '&toast=1';
-        dbg('toast ShowDialog', toastUrl);
-        try { app.ShowDialog(toastUrl, 'OfficeAI 正在启动', 420, 180, false); } catch (e) { dbg('toast 失败', e.message||e); }
+        var hs3 = getTaskPaneHosts();
+        for (var kk=0; kk<hs3.length; kk++) {
+          var hh4 = hs3[kk].obj;
+          if (hh4 && typeof hh4.ShowDialog === 'function') {
+            dbg('toast ShowDialog @'+hs3[kk].name, toastUrl);
+            try { hh4.ShowDialog(toastUrl, 'OfficeAI 正在启动', 420, 180, false); break; } catch(e){ dbg('toast 失败 @'+hs3[kk].name, e.message||e); }
+          }
+        }
       }
     } catch (e) {}
     return gatewayAlive().then(function (ok) {
