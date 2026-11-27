@@ -518,7 +518,7 @@ export class WindowsOfficeIntegrator {
         const destPath = path.join(to, entry.name);
         if (entry.isDirectory()) {
           copy(srcPath, destPath);
-        } else if (/[.](html?|js|json|xml)$/i.test(entry.name)) {
+        } else if (/[.](html?|js|json|xml)$/i.test(entry.name) && !srcPath.includes(`${path.sep}ui${path.sep}`)) {
           let text = fs.readFileSync(srcPath, 'utf8');
           const isJs = /\.js$/i.test(entry.name);
           for (const [key, value] of Object.entries(replacements)) {
@@ -547,12 +547,16 @@ export class WindowsOfficeIntegrator {
       fs.rmSync(wpsTarget, { recursive: true, force: true });
       const src = path.join(this.assetsRoot, 'wps-addin');
       if (fs.existsSync(src)) {
-        fs.mkdirSync(wpsTarget, { recursive: true });
-        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-          if (entry.isFile()) {
-            fs.copyFileSync(path.join(src, entry.name), path.join(wpsTarget, entry.name));
+        const copyNonWin = (from: string, to: string) => {
+          fs.mkdirSync(to, { recursive: true });
+          for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+            const s = path.join(from, entry.name);
+            const d = path.join(to, entry.name);
+            if (entry.isDirectory()) copyNonWin(s, d);
+            else fs.copyFileSync(s, d);
           }
-        }
+        };
+        copyNonWin(src, wpsTarget);
       }
       return {
         ok: false,

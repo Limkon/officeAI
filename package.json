@@ -7,8 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace=@officeai/shared && npm run build --workspace=@officeai/addin-ui && npm run build --workspace=@officeai/gateway && npm run build --workspace=@officeai/desktop-app",
-    "build:core": "npm run build --workspace=@officeai/shared && npm run build --workspace=@officeai/addin-ui && npm run build --workspace=@officeai/gateway",
+    "build": "npm run build --workspace=@officeai/shared && npm run build --workspace=@officeai/addin-ui && node packages/wps-addin/sync-ui.mjs && npm run build --workspace=@officeai/gateway && npm run build --workspace=@officeai/desktop-app",
+    "build:core": "npm run build --workspace=@officeai/shared && npm run build --workspace=@officeai/addin-ui && node packages/wps-addin/sync-ui.mjs && npm run build --workspace=@officeai/gateway",
     "test": "npm run test --workspace=@officeai/shared && npm run test --workspace=@officeai/gateway",
     "dev:gateway": "npm run dev --workspace=@officeai/gateway",
     "dev:ui": "npm run dev --workspace=@officeai/addin-ui"
