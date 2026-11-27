@@ -1,10 +1,18 @@
 /* global wps, et, wpp, Application */
 // 最小兜底：保证即使后续脚本异常，按钮也能弹框证明链路已通
+var __OA_G = (typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : typeof self !== "undefined" ? self : this);
 try {
-  window.OnAction = window.OnAction || function (c) { try { var id=(c&&c.Id)||'unknown'; if(typeof wps!=='undefined'&&wps.Alert) wps.Alert('OfficeAI 调试: 按钮已触发 '+id+'\n(若只看到此框，说明后续脚本加载异常，请反馈)'); else alert('OfficeAI 调试: 按钮已触发 '+id); } catch(e){} };
-  window.OnAddinLoad = window.OnAddinLoad || function(){ return true; };
-  window.OnGetEnabled = window.OnGetEnabled || function(){ return true; };
-  window.GetImage = window.GetImage || function(){ return ''; };
+  var __oaFallback = function (c) { try { var id=(c&&c.Id)||"unknown"; if(typeof wps!=="undefined"&&wps.Alert) wps.Alert("OfficeAI 调试: 按钮已触发 "+id+"\n(若只看到此框，说明后续脚本加载异常，请点‘调试日志’或重装)"); else if(typeof alert!=="undefined") alert("OfficeAI 调试: 按钮已触发 "+id); } catch(e){} };
+  __OA_G.OnAction = __OA_G.OnAction || __oaFallback;
+  __OA_G.OnAddinLoad = __OA_G.OnAddinLoad || function(){ return true; };
+  __OA_G.OnAddInLoad = __OA_G.OnAddInLoad || __OA_G.OnAddinLoad;
+  __OA_G.OnGetEnabled = __OA_G.OnGetEnabled || function(){ return true; };
+  __OA_G.GetImage = __OA_G.GetImage || function(){ return ""; };
+  try { if (typeof OnAction === "undefined") OnAction = __OA_G.OnAction; } catch(e){}
+  try { if (typeof OnAddinLoad === "undefined") OnAddinLoad = __OA_G.OnAddinLoad; } catch(e){}
+  try { if (typeof OnAddInLoad === "undefined") OnAddInLoad = __OA_G.OnAddInLoad; } catch(e){}
+  try { if (typeof OnGetEnabled === "undefined") OnGetEnabled = __OA_G.OnGetEnabled; } catch(e){}
+  try { if (typeof GetImage === "undefined") GetImage = __OA_G.GetImage; } catch(e){}
 } catch(e) {}
 /**
  * OfficeAI WPS 加载项（本地离线版）- 调试增强版
@@ -14,6 +22,8 @@ try {
  */
 (function () {
   try {
+  var __OA_G2 = (typeof globalThis !== "undefined" ? globalThis : typeof window !== "undefined" ? window : typeof self !== "undefined" ? self : this);
+  if (typeof __OA_G === "undefined") { try { __OA_G = __OA_G2; } catch(e){} }
   var GATEWAY_URL = '__OFFICEAI_GATEWAY_URL__';
   var LAUNCH_COMMAND = '__OFFICEAI_LAUNCH_COMMAND__';
   var LAUNCH_URL = '__OFFICEAI_LAUNCH_URL__';
@@ -365,18 +375,19 @@ try {
     });
   }
 
-  window.OnAddinLoad = function (ribbonUI) {
-    window.OfficeAIRibbonUI = ribbonUI;
+  function __oa_OnAddinLoad(ribbonUI) {
+    __OA_G.OfficeAIRibbonUI = ribbonUI;
+    try { window.OfficeAIRibbonUI = ribbonUI; } catch(e){}
     dbg('OnAddinLoad', { GATEWAY_URL: GATEWAY_URL, LAUNCH_COMMAND: LAUNCH_COMMAND });
     gatewayAlive().then(function (ok) { dbg('OnAddinLoad 探活', ok); });
     return true;
-  };
-  window.OnGetEnabled = function () { return true; };
-  window.GetImage = function (control) {
+  }
+  function __oa_GetEnabled(){ return true; }
+  function __oa_GetImage(control){
     dbg('GetImage', control && control.Id);
     return GATEWAY_URL + '/wps/assets/icon-32.png';
-  };
-  window.OnAction = function (control) {
+  }
+  function __oa_OnAction(control) {
     try {
       var id = control && control.Id ? control.Id : 'btnOpenTaskPane';
       dbg('OnAction 触发', id);
@@ -394,8 +405,31 @@ try {
       showLaunchFailed(detectWpsHostType());
     }
   };
+  // 暴露给 WPS ribbon（全局函数 + window/globalThis/self 三重挂载，兼容不同 WPS 版本的查找方式）
+  try {
+    __OA_G.OnAction = __oa_OnAction;
+    __OA_G.OnAddinLoad = __oa_OnAddinLoad;
+    __OA_G.OnAddInLoad = __oa_OnAddinLoad;
+    __OA_G.OnGetEnabled = __oa_GetEnabled;
+    __OA_G.GetImage = __oa_GetImage;
+    /* placeholder for bootstrap, assigned after */
+    try { OnAction = __oa_OnAction; } catch(e){}
+    try { OnAddinLoad = __oa_OnAddinLoad; } catch(e){}
+    try { OnAddInLoad = __oa_OnAddinLoad; } catch(e){}
+    try { OnGetEnabled = __oa_GetEnabled; } catch(e){}
+    try { GetImage = __oa_GetImage; } catch(e){}
+    try { window.OnAction = __oa_OnAction; } catch(e){}
+    try { window.OnAddinLoad = __oa_OnAddinLoad; } catch(e){}
+    try { window.OnAddInLoad = __oa_OnAddinLoad; } catch(e){}
+    try { window.OnGetEnabled = __oa_GetEnabled; } catch(e){}
+    try { window.GetImage = __oa_GetImage; } catch(e){}
+    if (typeof self !== 'undefined') {
+      try { self.OnAction = __oa_OnAction; } catch(e){}
+      try { self.OnAddinLoad = __oa_OnAddinLoad; } catch(e){}
+    }
+  } catch(e) { dbg('全局挂载失败', e.message||e); }
 
-  window.OfficeAIBootstrap = function (hostParam) {
+  __OA_G.OfficeAIBootstrap = window.OfficeAIBootstrap = function (hostParam) {
     var host = hostParam === 'wps' ? detectWpsHostType() : hostParam || 'standalone';
     dbg('OfficeAIBootstrap', host);
     gatewayAlive().then(function (ok) {
@@ -433,10 +467,23 @@ try {
     try {
       var msg = 'OfficeAI WPS 加载项初始化异常: ' + (outerErr && outerErr.message ? outerErr.message : outerErr) + '\n' + (outerErr && outerErr.stack ? outerErr.stack : '');
       try { console.log(msg); } catch (e) {}
-      window.OnAction = function(c){ try{ var id=(c&&c.Id)||'unknown'; var t='初始化异常，按钮仍可用: '+id+'\n'+msg.slice(0,1500); if(typeof wps!=='undefined'&&wps.Alert) wps.Alert(t); else alert(t); }catch(e){} };
-      window.OnAddinLoad = function(){ return true; };
+      var __oaErrFn = function(c){ try{ var id=(c&&c.Id)||'unknown'; var t='初始化异常，按钮仍可用: '+id+'\n'+msg.slice(0,1500); if(typeof wps!=='undefined'&&wps.Alert) wps.Alert(t); else if(typeof alert!=='undefined') alert(t); }catch(e){} };
+      try { window.OnAction = __oaErrFn; } catch(e){}
+      try { __OA_G.OnAction = __oaErrFn; } catch(e){}
+      try { OnAction = __oaErrFn; } catch(e){}
+      try { window.OnAddinLoad = function(){ return true; }; } catch(e){}
+      try { __OA_G.OnAddinLoad = function(){ return true; }; } catch(e){}
     } catch (e2) {}
   }
 })();
-// 最终兜底校验：若 OnAction 仍未定义，强制定义
-try { if (typeof window.OnAction !== 'function') { window.OnAction = function(c){ try{ alert('OfficeAI 兜底: 按钮 '+(c&&c.Id)); }catch(e){} }; } } catch (e) {}
+// 最终兜底校验：若 OnAction 仍未定义，强制定义（兼容 WPS 直接查找全局函数）
+try {
+  var __OA_F = function(c){ try{ var id=(c&&c.Id)||'unknown'; var t='OfficeAI 兜底: 按钮 '+(id)+' 安装正常但主逻辑未加载，请点“调试日志”查看或重装'; if(typeof wps!=='undefined'&&wps.Alert) wps.Alert(t); else if(typeof alert!=='undefined') alert(t); }catch(e){} };
+  var __OA_G3 = (typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this);
+  if (typeof __OA_G3.OnAction !== 'function') __OA_G3.OnAction = __OA_F;
+  if (typeof window !== 'undefined' && typeof window.OnAction !== 'function') window.OnAction = __OA_F;
+  try { if (typeof OnAction !== 'function') OnAction = __OA_F; } catch(e){}
+  if (typeof __OA_G3.OnAddinLoad !== 'function') __OA_G3.OnAddinLoad = function(){ return true; };
+  try { if (typeof OnAddinLoad !== 'function') OnAddinLoad = __OA_G3.OnAddinLoad; } catch(e){}
+  try { if (typeof OnAddInLoad !== 'function') OnAddInLoad = __OA_G3.OnAddinLoad; } catch(e){}
+} catch (e) {}

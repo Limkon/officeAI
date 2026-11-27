@@ -469,7 +469,7 @@ export class WindowsOfficeIntegrator {
     const localUrl = `file:///${normalizedRoot}/${this.wpsAddonFolderName}/`;
     return ['wps', 'et', 'wpp'].map(
       (type) =>
-        `<jsplugin name="officeai" type="${type}" url="${localUrl}" version="1.0.0" enable="enable_dev"/>`
+        `<jsplugin name="officeai" type="${type}" url="${localUrl}" version="1.0.0" enable="enable"/>`
     );
   }
 
