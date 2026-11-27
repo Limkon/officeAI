@@ -28,6 +28,8 @@ import {
   type WindowsOfficeStatus
 } from '@officeai/shared';
 import { apiClient, type PublicConfigResponse } from '../api/client';
+import { directConfigStore } from '../api/directConfig';
+import { directTestConnection } from '../api/directProviders';
 
 interface DashboardViewProps {
   config: PublicConfigResponse;
@@ -142,6 +144,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     void loadUsage();
   }, []);
 
+  const isDirect = (window as any).__OFFICEAI_DIRECT__ === true;
   const handleSaveProvider = async (setAsActive = false) => {
     if (!selectedProvider) return;
     setSaving(true);
@@ -154,7 +157,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (chosenModel && !models.includes(chosenModel)) {
         models.unshift(chosenModel);
       }
-
+      if (isDirect) {
+        directConfigStore.upsertProvider({
+          id: selectedProvider.id,
+          baseUrl: formBaseUrl.trim(),
+          ...(formApiKey.trim() ? { apiKey: formApiKey.trim() } : {}),
+          models,
+          selectedModel: chosenModel,
+          enabled: setAsActive ? true : formEnabled,
+        } as any);
+        if (setAsActive) directConfigStore.updateSettings({ activeProviderId: selectedProvider.id, activeModel: chosenModel });
+        await onRefreshConfig();
+        setTestMsg({ ok: true, text: setAsActive ? '已保存（直连模式，存于浏览器）并设为当前模型' : '配置已保存（直连模式，存于浏览器 localStorage）' });
+        return;
+      }
       await apiClient.saveProvider(selectedProvider.id, {
         baseUrl: formBaseUrl.trim(),
         ...(formApiKey.trim() ? { apiKey: formApiKey.trim() } : {}),
@@ -162,14 +178,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         selectedModel: chosenModel,
         enabled: setAsActive ? true : formEnabled
       });
-
       if (setAsActive) {
         await apiClient.updateSettings({
           activeProviderId: selectedProvider.id,
           activeModel: chosenModel
         });
       }
-
       await onRefreshConfig();
       setTestMsg({
         ok: true,
@@ -187,6 +201,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setTesting(true);
     setTestMsg(null);
     try {
+      if (isDirect) {
+        const res = await directTestConnection({
+          ...selectedProvider,
+          baseUrl: formBaseUrl.trim(),
+          ...(formApiKey.trim() ? { apiKey: formApiKey.trim() } : {}),
+          selectedModel: formModel.trim(),
+          models: formCustomModels.split(/[,，\n]/).map(s=>s.trim()).filter(Boolean),
+        } as any);
+        setTestMsg({ ok: res.ok, text: res.message });
+        if (res.ok && (res as any).models?.length > 0) {
+          setFormCustomModels((res as any).models.join(', '));
+          if (!(res as any).models.includes(formModel)) setFormModel((res as any).models[0]);
+        }
+        return;
+      }
       const res = await apiClient.testProvider(selectedProvider.id, {
         baseUrl: formBaseUrl.trim(),
         ...(formApiKey.trim() ? { apiKey: formApiKey.trim() } : {}),
@@ -270,6 +299,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     if (!selectedProvider) return;
     setSaving(true);
     try {
+      if (isDirect) {
+        directConfigStore.upsertProvider({ id: selectedProvider.id, apiKey: '' } as any);
+        setFormApiKey('');
+        await onRefreshConfig();
+        setTestMsg({ ok: true, text: '已清除保存的 API Key（直连模式）' });
+        return;
+      }
       await apiClient.saveProvider(selectedProvider.id, { clearApiKey: true });
       setFormApiKey('');
       await onRefreshConfig();
@@ -285,6 +321,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     e.preventDefault();
     if (!newProvName.trim() || !newProvBaseUrl.trim()) return;
     const id = `custom-${Date.now()}`;
+    if (isDirect) {
+      const cur = directConfigStore.get();
+      cur.providers.push({ id, presetId: newProvCategory === 'local' ? 'vllm' : 'custom-cloud', name: newProvName.trim(), category: newProvCategory as any, protocol: newProvProtocol as any, baseUrl: newProvBaseUrl.trim(), models: [newProvModel.trim() || 'default'], selectedModel: newProvModel.trim() || 'default', enabled: true, apiKey: '' } as any);
+      localStorage.setItem('officeai_direct_config_v1', JSON.stringify(cur));
+      setAddingProvider(false);
+      setNewProvName('');
+      setSelectedId(id);
+      await onRefreshConfig();
+      return;
+    }
     await apiClient.createProvider({
       id,
       presetId: newProvCategory === 'local' ? 'vllm' : 'custom-cloud',
@@ -307,6 +353,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setSavingGlobal(true);
     setGlobalMsg(null);
     try {
+      if (isDirect) {
+        directConfigStore.updateSettings({ temperature: Number(globalTemp), maxTokens: Number(globalMaxTokens), systemPrompt: globalSystemPrompt.trim() } as any);
+        await onRefreshConfig();
+        setGlobalMsg('全局参数已保存（直连模式，存于浏览器）');
+        return;
+      }
       await apiClient.updateSettings({
         temperature: Number(globalTemp),
         maxTokens: Number(globalMaxTokens),
@@ -335,6 +387,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       applyMode: 'panel',
       builtIn: false
     };
+    if (isDirect) {
+      const cur = directConfigStore.get();
+      cur.prompts.push(prompt as any);
+      localStorage.setItem('officeai_direct_config_v1', JSON.stringify(cur));
+      setNewPromptTitle('');
+      setNewPromptSystem('');
+      await onRefreshConfig();
+      return;
+    }
     await apiClient.savePrompt(prompt);
     setNewPromptTitle('');
     setNewPromptSystem('');
@@ -395,6 +456,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </header>
 
+      {isDirect && (
+        <div className="mx-auto max-w-6xl px-6 pt-4">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            <b>直连模式</b>（参考 <code>it235/office-ai-agent</code>）：当前未连接本地网关，任务窗格直接在浏览器内 <code>fetch</code> 模型 API，<b>无需登录</b>。在此页填入的 API Key 仅存于浏览器 localStorage（<code>officeai_direct_config_v1</code>），可直接对话；本地模型（Ollama）需允许跨域（<code>OLLAMA_ORIGINS=*</code>）或通过网关代理，否则会被浏览器 CORS / 混合内容拦截。
+          </div>
+        </div>
+      )}
       <main className="mx-auto max-w-6xl px-6 py-6">
         {/* TAB 1: PROVIDERS */}
         {tab === 'providers' && (
@@ -748,7 +816,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     {selectedProvider.id.startsWith('custom-') && (
                       <button
                         onClick={async () => {
-                          await apiClient.deleteProvider(selectedProvider.id);
+                          if (isDirect) {
+                            const cur = directConfigStore.get();
+                            cur.providers = cur.providers.filter(p=>p.id!==selectedProvider.id) as any;
+                            localStorage.setItem('officeai_direct_config_v1', JSON.stringify(cur));
+                          } else {
+                            await apiClient.deleteProvider(selectedProvider.id);
+                          }
                           await onRefreshConfig();
                           setSelectedId('ollama');
                         }}
@@ -1194,7 +1268,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {!p.builtIn && (
                     <button
                       onClick={async () => {
-                        await apiClient.deletePrompt(p.id);
+                        if (isDirect) {
+                          const cur = directConfigStore.get();
+                          cur.prompts = cur.prompts.filter(x=>x.id!==p.id) as any;
+                          localStorage.setItem('officeai_direct_config_v1', JSON.stringify(cur));
+                        } else {
+                          await apiClient.deletePrompt(p.id);
+                        }
                         await onRefreshConfig();
                       }}
                       className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
