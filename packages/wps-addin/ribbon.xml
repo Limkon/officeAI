@@ -61,6 +61,14 @@
             getImage="GetImage"
             getEnabled="OnGetEnabled"
           />
+          <button
+            id="btnDebugLog"
+            label="调试日志"
+            size="large"
+            onAction="OnAction"
+            getImage="GetImage"
+            getEnabled="OnGetEnabled"
+          />
         </group>
       </tab>
     </tabs>
