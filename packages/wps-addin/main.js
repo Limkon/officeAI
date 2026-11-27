@@ -1,4 +1,11 @@
 /* global wps, et, wpp, Application */
+// 最小兜底：保证即使后续脚本异常，按钮也能弹框证明链路已通
+try {
+  window.OnAction = window.OnAction || function (c) { try { var id=(c&&c.Id)||'unknown'; if(typeof wps!=='undefined'&&wps.Alert) wps.Alert('OfficeAI 调试: 按钮已触发 '+id+'\n(若只看到此框，说明后续脚本加载异常，请反馈)'); else alert('OfficeAI 调试: 按钮已触发 '+id); } catch(e){} };
+  window.OnAddinLoad = window.OnAddinLoad || function(){ return true; };
+  window.OnGetEnabled = window.OnGetEnabled || function(){ return true; };
+  window.GetImage = window.GetImage || function(){ return ''; };
+} catch(e) {}
 /**
  * OfficeAI WPS 加载项（本地离线版）- 调试增强版
  * 安装到 %APPDATA%\kingsoft\wps\jsaddons\officeai_1.0.0\ 下
@@ -6,6 +13,7 @@
  * 全量步骤均写入 DEBUG_LOG，点“调试日志”可查看
  */
 (function () {
+  try {
   var GATEWAY_URL = '__OFFICEAI_GATEWAY_URL__';
   var LAUNCH_COMMAND = '__OFFICEAI_LAUNCH_COMMAND__';
   var LAUNCH_URL = '__OFFICEAI_LAUNCH_URL__';
@@ -421,4 +429,14 @@
       setState('');
     });
   };
+  } catch (outerErr) {
+    try {
+      var msg = 'OfficeAI WPS 加载项初始化异常: ' + (outerErr && outerErr.message ? outerErr.message : outerErr) + '\n' + (outerErr && outerErr.stack ? outerErr.stack : '');
+      try { console.log(msg); } catch (e) {}
+      window.OnAction = function(c){ try{ var id=(c&&c.Id)||'unknown'; var t='初始化异常，按钮仍可用: '+id+'\n'+msg.slice(0,1500); if(typeof wps!=='undefined'&&wps.Alert) wps.Alert(t); else alert(t); }catch(e){} };
+      window.OnAddinLoad = function(){ return true; };
+    } catch (e2) {}
+  }
 })();
+// 最终兜底校验：若 OnAction 仍未定义，强制定义
+try { if (typeof window.OnAction !== 'function') { window.OnAction = function(c){ try{ alert('OfficeAI 兜底: 按钮 '+(c&&c.Id)); }catch(e){} }; } } catch (e) {}
