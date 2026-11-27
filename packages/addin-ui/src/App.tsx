@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { apiClient, type PublicConfigResponse } from './api/client';
+import { directConfigStore } from './api/directConfig';
 import { DashboardView } from './components/DashboardView';
 import { TaskPaneView } from './components/TaskPaneView';
 import { detectHostContext, type HostContextInfo } from './office/hostAdapter';
@@ -25,8 +26,23 @@ export const App: React.FC = () => {
   const isDashboard = mode === 'dashboard';
 
   const refreshConfig = useCallback(async () => {
-    const cfg = await apiClient.getConfig();
-    setConfig(cfg);
+    try {
+      const cfg = await apiClient.getConfig();
+      setConfig(cfg);
+      (window as any).__OFFICEAI_DIRECT__ = false;
+    } catch {
+      // 网关不可用时回退到浏览器直连配置（localStorage）
+      const direct = directConfigStore.get();
+      const masked = direct.providers.map((p) => ({
+        ...p,
+        apiKeyMasked: p.apiKey ? `${p.apiKey.slice(0, 4)}••••${p.apiKey.slice(-4)}` : '',
+        hasApiKey: !!p.apiKey.trim(),
+      }));
+      // 去掉真实 key，防止泄露到 UI 的序列化
+      const publicProviders = masked.map(({ apiKey, ...rest }) => rest) as any;
+      setConfig({ version: direct.version, settings: direct.settings, providers: publicProviders, prompts: direct.prompts } as any);
+      (window as any).__OFFICEAI_DIRECT__ = true;
+    }
   }, []);
 
   // 心跳：页面存活期间保持网关运行；页面关闭后网关即可自行退出。
@@ -48,31 +64,60 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false;
-    // 给 detectHostContext 与 /api/config 都加超时，避免无限转圈
     const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
       Promise.race([
         p,
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`${label} 超时（${ms}ms），请检查本地网关是否已启动（端口 18080/18443）`)), ms)
-        )
+          setTimeout(() => reject(new Error(`${label} 超时（${ms}ms）`)), ms)
+        ),
       ]);
 
     withTimeout(detectHostContext(), 2500, 'Office 环境检测')
       .then((hostInfo) => {
         if (!cancelled) setHost(hostInfo);
-        return withTimeout(apiClient.getConfig(), 6000, '网关连接');
+        return withTimeout(apiClient.getConfig(), 4000, '网关连接');
       })
       .then((cfg) => {
-        if (!cancelled) setConfig(cfg);
+        if (!cancelled) {
+          setConfig(cfg);
+          (window as any).__OFFICEAI_DIRECT__ = false;
+        }
       })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      .catch(() => {
+        // 网关不可达 → 回退浏览器直连（参考 it235/office-ai-agent 的直连模型，无需登录）
+        if (cancelled) return;
+        try {
+          const direct = directConfigStore.get();
+          const masked = direct.providers.map((p) => ({
+            ...p,
+            apiKeyMasked: p.apiKey ? `${p.apiKey.slice(0, 4)}••••${p.apiKey.slice(-4)}` : '',
+            hasApiKey: !!p.apiKey.trim(),
+          }));
+          const publicProviders = masked.map(({ apiKey, ...rest }) => rest) as any;
+          setConfig({ version: direct.version, settings: direct.settings, providers: publicProviders, prompts: direct.prompts } as any);
+          (window as any).__OFFICEAI_DIRECT__ = true;
+          // 直连模式不视为 error，直接可用；若需网关的本地模型，用户可在配置中心切回
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       });
 
-    // 兜底：8 秒仍未就绪则强制提示，避免用户一直看到转圈
+    // 兜底：8 秒仍未就绪则强制回退直连，避免转圈
     const fallback = setTimeout(() => {
       if (!cancelled && !config && !error) {
-        setError('加载超时：未能在 8 秒内连接到 OfficeAI 本地网关。请确认 OfficeAI 已安装并已重启 Word/WPS，或点击“配置中心”查看运行状态。');
+        try {
+          const direct = directConfigStore.get();
+          const masked = direct.providers.map((p) => ({
+            ...p,
+            apiKeyMasked: p.apiKey ? `${p.apiKey.slice(0, 4)}••••${p.apiKey.slice(-4)}` : '',
+            hasApiKey: !!p.apiKey.trim(),
+          }));
+          const publicProviders = masked.map(({ apiKey, ...rest }) => rest) as any;
+          setConfig({ version: direct.version, settings: direct.settings, providers: publicProviders, prompts: direct.prompts } as any);
+          (window as any).__OFFICEAI_DIRECT__ = true;
+        } catch (e) {
+          setError('加载超时：未能连接到网关且直连配置读取失败');
+        }
       }
     }, 8000);
 
@@ -80,7 +125,7 @@ export const App: React.FC = () => {
       cancelled = true;
       clearTimeout(fallback);
     };
-  }, [config, error]);
+  }, []);
 
   if (error) {
     const gwHint = (() => {

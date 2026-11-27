@@ -30,6 +30,8 @@ import {
   type PromptAction
 } from '@officeai/shared';
 import { apiClient, type PublicConfigResponse } from '../api/client';
+import { directConfigStore } from '../api/directConfig';
+import { directStreamChat } from '../api/directProviders';
 import {
   executeOfficeAction,
   readHostSelection,
@@ -145,6 +147,13 @@ export const TaskPaneView: React.FC<TaskPaneViewProps> = ({
   };
 
   const handleModelChange = async (providerId: string, model: string) => {
+    const isDirect = (window as any).__OFFICEAI_DIRECT__ === true;
+    if (isDirect) {
+      directConfigStore.updateSettings({ activeProviderId: providerId, activeModel: model });
+      directConfigStore.upsertProvider({ id: providerId, selectedModel: model, enabled: true } as any);
+      await onRefreshConfig();
+      return;
+    }
     await apiClient.updateSettings({
       activeProviderId: providerId,
       activeModel: model
@@ -261,49 +270,89 @@ export const TaskPaneView: React.FC<TaskPaneViewProps> = ({
 
     let rawAccumulated = '';
 
+    const isDirect = (window as any).__OFFICEAI_DIRECT__ === true;
     try {
-      await apiClient.streamChat(
-        {
-          providerId: activeProvider.id,
-          model: activeModel,
-          messages: historyMessages,
-          hostApp: host.app
-        },
-        (ev) => {
-          if (ev.type === 'delta' && ev.content) {
-            rawAccumulated += ev.content;
-            const cleanStreamView = stripStreamingOfficeActionTags(rawAccumulated);
-            const hasPendingAction = /<office_action/i.test(rawAccumulated);
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? {
-                      ...m,
-                      content:
-                        cleanStreamView ||
-                        (hasPendingAction ? '正在生成文档操作指令...' : '')
-                    }
-                  : m
-              )
-            );
-          } else if (ev.type === 'reasoning' && ev.content) {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? { ...m, reasoning: (m.reasoning || '') + ev.content }
-                  : m
-              )
-            );
-          } else if (ev.type === 'error') {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, error: ev.error || '生成出错' } : m
-              )
-            );
+      if (isDirect) {
+        // 浏览器直连（参考 it235/office-ai-agent 的直连思路，无需登录/网关）
+        const directCfg = directConfigStore.get();
+        const realProvider = directCfg.providers.find((p) => p.id === activeProvider.id) || (activeProvider as any);
+        const temp = directCfg.settings.temperature;
+        const mt = directCfg.settings.maxTokens;
+        await directStreamChat(
+          {
+            provider: realProvider,
+            model: activeModel,
+            messages: historyMessages,
+            temperature: temp,
+            maxTokens: mt,
+            signal: controller.signal,
+            onEvent: (ev) => {
+              if (ev.type === 'delta' && ev.content) {
+                rawAccumulated += ev.content;
+                const cleanStreamView = stripStreamingOfficeActionTags(rawAccumulated);
+                const hasPendingAction = /<office_action/i.test(rawAccumulated);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? {
+                          ...m,
+                          content: cleanStreamView || (hasPendingAction ? '正在生成文档操作指令...' : ''),
+                        }
+                      : m
+                  )
+                );
+              } else if (ev.type === 'reasoning' && ev.content) {
+                setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, reasoning: (m.reasoning || '') + ev.content } : m)));
+              } else if (ev.type === 'error') {
+                setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, error: ev.error || '生成出错' } : m)));
+              }
+            },
           }
-        },
-        controller.signal
-      );
+        );
+      } else {
+        await apiClient.streamChat(
+          {
+            providerId: activeProvider.id,
+            model: activeModel,
+            messages: historyMessages,
+            hostApp: host.app,
+          },
+          (ev) => {
+            if (ev.type === 'delta' && ev.content) {
+              rawAccumulated += ev.content;
+              const cleanStreamView = stripStreamingOfficeActionTags(rawAccumulated);
+              const hasPendingAction = /<office_action/i.test(rawAccumulated);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content:
+                          cleanStreamView ||
+                          (hasPendingAction ? '正在生成文档操作指令...' : '')
+                      }
+                    : m
+                )
+              );
+            } else if (ev.type === 'reasoning' && ev.content) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, reasoning: (m.reasoning || '') + ev.content }
+                    : m
+                )
+              );
+            } else if (ev.type === 'error') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantId ? { ...m, error: ev.error || '生成出错' } : m
+                )
+              );
+            }
+          },
+          controller.signal
+        );
+      }
 
       const parsed = parseOfficeActions(rawAccumulated);
       const actionStates: ActionCardState[] = parsed.actions.map((p) => ({
