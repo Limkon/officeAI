@@ -559,7 +559,25 @@ try {
   function __oa_GetEnabled(){ return true; }
   function __oa_GetImage(control){
     dbg('GetImage', control && control.Id);
-    return GATEWAY_URL + '/wps/assets/icon-32.png';
+    // WPS 的 GetImage 要求返回插件目录内的相对路径或 file://，http 会显示为 ?
+    try {
+      // 优先返回相对路径，WPS 会自动解析为插件根
+      if (control && control.Id) {
+        // 不同按钮可返回不同图标（若存在），否则统一 32
+        var iconMap = {
+          btnOpenTaskPane: 'assets/icon-32.png',
+          btnPolish: 'assets/icon-32.png',
+          btnTranslate: 'assets/icon-32.png',
+          btnSummarize: 'assets/icon-32.png',
+          btnFormula: 'assets/icon-32.png',
+          btnPptOutline: 'assets/icon-32.png',
+          btnOpenDashboard: 'assets/icon-32.png',
+          btnDebugLog: 'assets/icon-32.png'
+        };
+        if (iconMap[control.Id]) return iconMap[control.Id];
+      }
+      return 'assets/icon-32.png';
+    } catch(e) { return 'assets/icon-32.png'; }
   }
   function __oa_OnAction(control) {
     try {

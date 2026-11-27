@@ -19,8 +19,12 @@
   </script>
   <script type="module" crossorigin src="./assets/index-D89DrgZc.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-zmh2YHTH.css">
+  <style>#oa-fallback{font-family:system-ui;padding:20px;font-size:13px;color:#334155}#oa-fallback h3{margin:0 0 8px;font-size:15px}</style>
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased">
-  <div id="root"></div>
+  <div id="root"><div id="oa-fallback"><h3>OfficeAI 正在加载…</h3><div id="oa-fallback-msg">若 3 秒后仍空白，请检查网关 http://127.0.0.1:18080 是否存活</div><div id="oa-fallback-detail" style="margin-top:10px;font-size:11px;color:#64748b;white-space:pre-wrap;word-break:break-all"></div></div></div>
+  <script>
+    setTimeout(function(){var d=document.getElementById('oa-fallback-detail'); if(d){try{d.textContent='location='+location.href+'\nprotocol='+location.protocol}catch(e){d.textContent=e.message}}},3500);
+  </script>
 </body>
 </html>
