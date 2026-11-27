@@ -12,9 +12,9 @@
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="OfficeAI 智能助手"/>
   <Description DefaultValue="将 OpenAI、Claude、Gemini、DeepSeek、通义千问、智谱GLM、Kimi 及 Ollama/LM Studio 本地模型接入 Word、Excel、PowerPoint。"/>
-  <IconUrl DefaultValue="https://127.0.0.1:18443/office/assets/icon-32.png"/>
-  <HighResolutionIconUrl DefaultValue="https://127.0.0.1:18443/office/assets/icon-80.png"/>
-  <SupportUrl DefaultValue="https://127.0.0.1:18443/dashboard"/>
+  <IconUrl DefaultValue="http://127.0.0.1:18080/office/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="http://127.0.0.1:18080/office/assets/icon-80.png"/>
+  <SupportUrl DefaultValue="http://127.0.0.1:18080/dashboard"/>
 
   <AppDomains>
     <AppDomain>https://127.0.0.1:18443</AppDomain>
@@ -28,7 +28,7 @@
   </Hosts>
 
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://127.0.0.1:18443/?host=office"/>
+    <SourceLocation DefaultValue="http://127.0.0.1:18080/?host=office"/>
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>
@@ -155,15 +155,15 @@
 
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16" DefaultValue="https://127.0.0.1:18443/office/assets/icon-16.png"/>
-        <bt:Image id="Icon.32" DefaultValue="https://127.0.0.1:18443/office/assets/icon-32.png"/>
-        <bt:Image id="Icon.80" DefaultValue="https://127.0.0.1:18443/office/assets/icon-80.png"/>
+        <bt:Image id="Icon.16" DefaultValue="http://127.0.0.1:18080/office/assets/icon-16.png"/>
+        <bt:Image id="Icon.32" DefaultValue="http://127.0.0.1:18080/office/assets/icon-32.png"/>
+        <bt:Image id="Icon.80" DefaultValue="http://127.0.0.1:18080/office/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://127.0.0.1:18443/dashboard"/>
-        <bt:Url id="Support.Url" DefaultValue="https://127.0.0.1:18443/dashboard"/>
-        <bt:Url id="Commands.Url" DefaultValue="https://127.0.0.1:18443/office/commands.html"/>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://127.0.0.1:18443/?host=office"/>
+        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="http://127.0.0.1:18080/dashboard"/>
+        <bt:Url id="Support.Url" DefaultValue="http://127.0.0.1:18080/dashboard"/>
+        <bt:Url id="Commands.Url" DefaultValue="http://127.0.0.1:18080/office/commands.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="http://127.0.0.1:18080/?host=office"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GetStarted.Title" DefaultValue="OfficeAI 已就绪"/>
