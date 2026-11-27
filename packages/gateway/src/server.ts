@@ -215,8 +215,11 @@ function isWithinDir(targetPath: string, baseDir: string): boolean {
 export function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true; // same-origin / curl / native desktop
   if (origin === 'null') return true; // file:// or sandboxed Office/WPS webview
+  // WPS file:// 加载项的 Origin 可能为 "file://" 或不规范，直接放行
+  if (origin.startsWith('file://')) return true;
   try {
     const u = new URL(origin);
+    if (u.protocol === 'file:') return true;
     if (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]') {
       return u.protocol === 'http:' || u.protocol === 'https:';
     }
