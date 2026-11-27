@@ -6,12 +6,8 @@
   <script type="text/javascript" src="main.js"></script>
 </head>
 <body>
-  <script>
-    // `main.js` (loaded above) performs the health check and decides whether to
-    // redirect to the gateway UI or to show the embedded launcher page.
-    if (window.OfficeAIBootstrap) {
-      window.OfficeAIBootstrap('wps');
-    }
-  </script>
+  <!-- WPS 会自动以此文件为隐藏宿主加载 main.js 并注册 ribbon 回调；
+       切勿在此自动跳转，否则会销毁 OnAction 等全局函数导致“只有一排菜单、点不开”。
+       任务窗格由 main.js 的 CreateTaskPane 按需创建，指向网关页面。 -->
 </body>
 </html>
